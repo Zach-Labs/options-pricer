@@ -8,7 +8,8 @@
 "use strict";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const PALETTE = ["#58a6ff", "#3fb950", "#d29922", "#f85149", "#bc8cff", "#39c5cf"];
+// Ordered light-to-dark so the shortest expiry reads strongest against paper.
+const PALETTE = ["#b9c6d6", "#8ba3bf", "#5f7fa5", "#3c5f8a", "#1a3e6f", "#8f2d56"];
 
 const state = {
   kind: "call",
@@ -144,62 +145,80 @@ function plot(svg, series, opts = {}) {
 
 /* ------------------------------------------------------- render: the model */
 
+/* Split a number so the decimals can be held back typographically. The eye
+ * should land on the dollars; the cents are confirmation, not headline. */
+function splitNumber(x, dp = 4) {
+  const str = Math.abs(x) < 1e-7 && x !== 0 ? x.toExponential(2) : x.toFixed(dp);
+  const i = str.indexOf(".");
+  return i < 0 ? [str, ""] : [str.slice(0, i), str.slice(i)];
+}
+
 function renderCards(d) {
+  const [whole, frac] = splitNumber(d.closed_form, 4);
+  $("price-hero").innerHTML =
+    `<div class="price-main">${whole}<span class="frac">${frac}</span></div>`;
+
+  const style = state.style === "american" ? "American" : "European";
+  const days = Math.round(d.inputs.T * 365);
+  $("price-caption").innerHTML =
+    `${style} <b>${state.kind}</b>, strike <b>${fmt(d.inputs.K, 2)}</b>, ` +
+    `${days} days out, on a spot of <b>${fmt(d.inputs.S, 2)}</b> at ` +
+    `<b>${(d.inputs.sigma * 100).toFixed(2)}%</b> volatility.`;
+
   const tv = d.closed_form - d.intrinsic;
-  const cards = [
-    { k: `${state.kind} premium, closed form`, v: fmt(d.closed_form, 4), sub: "Black-Scholes-Merton", primary: true },
-    { k: "intrinsic", v: fmt(d.intrinsic, 4), sub: "value if exercised now" },
-    { k: "time value", v: fmt(tv, 4), sub: "what the optionality is worth" },
+  const stats = [
+    { k: "Intrinsic", v: fmt(d.intrinsic, 4), n: "if exercised now" },
+    { k: "Time value", v: fmt(tv, 4), n: "what the optionality is worth" },
   ];
 
   if (d.tree && !d.tree.error) {
-    cards.push({ k: `tree, european (${d.inputs.steps} steps)`, v: fmt(d.tree.european, 4), sub: `vs closed form: ${fmt(d.tree.tree_vs_closed_form, 6)}` });
-    cards.push({ k: "tree, american", v: fmt(d.tree.american, 4), sub: "max(intrinsic, continuation)" });
-    cards.push({ k: "early-exercise premium", v: fmt(d.tree.early_exercise_premium, 4), sub: "american minus european" });
+    stats.push({
+      k: `Lattice, ${d.inputs.steps} steps`,
+      v: fmt(d.tree.european, 4),
+      n: `${fmt(d.tree.tree_vs_closed_form, 6)} from the closed form`,
+    });
+    stats.push({
+      k: "Early exercise",
+      v: fmt(d.tree.early_exercise_premium, 4),
+      n: "American minus European",
+    });
   }
 
-  $("cards").innerHTML = cards.map((c) =>
-    `<div class="card${c.primary ? " primary" : ""}">
-       <div class="k">${c.k}</div>
-       <div class="v">${c.v}</div>
-       <div class="sub">${c.sub}</div>
+  $("stats").innerHTML = stats.map((c) =>
+    `<div class="stat">
+       <div class="stat-label">${c.k}</div>
+       <div class="stat-value">${c.v}</div>
+       <div class="stat-note">${c.n}</div>
      </div>`).join("");
 
   if (d.tree && d.tree.error) {
     $("tree-note").innerHTML = `<div class="err">Lattice refused: ${d.tree.error}</div>`;
   } else if (d.tree) {
     const p = d.tree.params;
+    const ok = p.d < p.growth && p.growth < p.u;
     $("tree-note").innerHTML =
-      `CRR parameters: u = ${fmt(p.u, 6)}, d = ${fmt(p.d, 6)}, growth = e^((r-q)dt) = ${fmt(p.growth, 6)}, ` +
-      `q = ${fmt(p.qp, 6)}, dt = ${fmt(p.dt, 6)}. ` +
-      `No-arbitrage d &lt; growth &lt; u: <span class="badge ${p.d < p.growth && p.growth < p.u ? "ok" : "no"}">` +
-      `${p.d < p.growth && p.growth < p.u ? "holds" : "VIOLATED"}</span>`;
+      `CRR parameters: u = ${fmt(p.u, 6)}, d = ${fmt(p.d, 6)}, ` +
+      `e<sup>(r&#8722;q)dt</sup> = ${fmt(p.growth, 6)}, q = ${fmt(p.qp, 6)}. ` +
+      `No-arbitrage d &lt; growth &lt; u <span class="badge ${ok ? "ok" : "no"}">` +
+      `${ok ? "holds" : "VIOLATED"}</span>`;
   }
 }
 
 function renderGreeks(d) {
-  const body = $("greeks-body");
-  body.innerHTML = GREEK_META.map((g) => {
+  $("greeks-body").innerHTML = GREEK_META.map((g) => {
     const shown = d.greeks_display[g.key];
     const raw = d.greeks_raw[g.key];
-    // Compact: the full explanation of the rescaling lives in the units column,
-    // this is just the raw number and a short tag, so it fits the narrow cell.
-    const rawNote = Math.abs(shown - raw) > 1e-12
-      ? `<div class="greek-units">raw ${fmt(raw, 5)}<br>${g.scale}</div>` : "";
+    const rescaled = Math.abs(shown - raw) > 1e-12;
     return `<tr>
       <td>
         <div><span class="greek-name">${g.name}</span><span class="greek-sym">${g.symbol}</span></div>
         <div class="greek-partial">${g.partial}</div>
       </td>
-      <td class="num"><div style="font-size:15px">${fmt(shown, 5)}</div>${rawNote}</td>
-      <td><div class="greek-formula">${g.formula}</div></td>
-      <td>
-        <div class="greek-meaning">${g.meaning}</div>
-        <div class="greek-units">${g.units}</div>
-        <details class="desk"><summary>why a desk cares</summary>
-          <div class="greek-desk">${g.desk}</div>
-        </details>
+      <td class="num">
+        <div class="greek-val">${fmt(shown, 5)}</div>
+        ${rescaled ? `<div class="greek-raw">${g.scale}</div>` : ""}
       </td>
+      <td><div class="greek-meaning">${g.meaning}</div></td>
     </tr>`;
   }).join("");
 }
@@ -253,7 +272,12 @@ async function refreshLattice() {
   }
 
   svg.innerHTML = "";
-  const W = 900, H = 420, M = { l: 30, r: 30, t: 24, b: 24 };
+  // Read the height off the viewBox rather than hard-coding it. Hard-coding is
+  // how the markup and the drawing code drifted apart and clipped the bottom
+  // row of nodes when the viewBox was changed.
+  const W = 900;
+  const H = svg.viewBox.baseVal.height || 400;
+  const M = { l: 30, r: 30, t: 24, b: 24 };
   const n = data.params.steps;
   const iw = W - M.l - M.r, ih = H - M.t - M.b;
 
@@ -354,11 +378,9 @@ async function fetchQuote() {
       `realized vol  ${pct(q.realized_vol_1y)} (1y) · ${pct(q.realized_vol_30d)} (30d)<br>` +
       `div yield     ${pct(q.dividend_yield)} (${q.trailing_dividends.toFixed(2)} paid / spot)<br>` +
       `source        ${q.source}<br>` +
-      `strike        set to ${Number($("K").value).toFixed(2)}, the nearest listed-style strike` +
-      `<span class="warn-note">Sigma was filled with <b>realized</b> volatility, which is what the ` +
-      `stock actually did. Black-Scholes wants <b>implied</b> volatility, backed out of a traded ` +
-      `option price. They are different numbers and substituting one for the other is a modelling ` +
-      `assumption, not a data lookup. Overwrite sigma with a real implied vol when you have one.</span>`;
+      `strike        ${Number($("K").value).toFixed(2)}, nearest listed` +
+      `<span class="warn-note">Sigma is <b>realized</b> vol, what the stock did. ` +
+      `Black-Scholes wants <b>implied</b> vol. Click a chain row for the real one.</span>`;
     $("quote-status").after(detail);
 
     scheduleRefresh();
@@ -385,10 +407,10 @@ async function loadExpiries(ticker) {
     // to be stale, which makes a bad first impression of a working chain.
     const target = d.expiries.find((e) => (new Date(e) - new Date()) / 86400000 > 80);
     if (target) sel.value = target;
-    $("chain-panel").hidden = false;
+    $("chain-section").hidden = false;
     await loadChain();
   } catch (e) {
-    $("chain-panel").hidden = true;
+    $("chain-section").hidden = true;
   }
 }
 
@@ -492,26 +514,33 @@ async function applyContract(strike, tr) {
   if (!cmp) return;
 
   if (row.implied_vol === null) {
-    cmp.innerHTML = `<div class="chain-compare">
+    cmp.innerHTML = `<div class="caption">
       Loaded the ${strike.toFixed(2)} strike, but this contract has
-      <b>no implied volatility</b>: ${row.implied_vol_error}
-      Sigma was left at its previous value, so the price below is the model's, not the market's.
+      <strong>no implied volatility</strong>: ${row.implied_vol_error}
+      Sigma was left at its previous value, so the price above is the model's, not the market's.
     </div>`;
     return;
   }
 
   const diff = priced.closed_form - row.last_price;
-  cmp.innerHTML = `<div class="chain-compare">
-    market last traded &nbsp;<b>${row.last_price.toFixed(4)}</b><br>
-    implied volatility &nbsp;&nbsp;<b>${(row.implied_vol * 100).toFixed(4)}%</b>
-      &nbsp;<span class="dim">(inverted from that price by this pricer)</span><br>
-    our model at that vol &nbsp;<b>${priced.closed_form.toFixed(4)}</b><br>
-    difference &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-      <b>${diff.toExponential(2)}</b>
-      &nbsp;<span class="dim">the model reprices the market to the precision of the inputs
-      shown, because that is what implied volatility means: the sigma that makes this formula
-      agree with that quote</span>
-  </div>`;
+  const cells = [
+    { k: "Market last traded", v: row.last_price.toFixed(4), n: "" },
+    { k: "Implied volatility", v: (row.implied_vol * 100).toFixed(4) + "%", n: "inverted from that price" },
+    { k: "Our model at that vol", v: priced.closed_form.toFixed(4), n: "" },
+    { k: "Difference", v: diff.toExponential(2), n: "" },
+  ];
+  cmp.innerHTML =
+    `<div class="compare">` +
+    cells.map((c) =>
+      `<div class="stat">
+         <div class="stat-label">${c.k}</div>
+         <div class="stat-value">${c.v}</div>
+         <div class="stat-note">${c.n}</div>
+       </div>`).join("") +
+    `</div>
+     <div class="caption">Fed the market&#8217;s own implied volatility, the formula reproduces
+     the market&#8217;s own price. That is not a coincidence, it is what implied volatility
+     means.</div>`;
 }
 
 /* -------------------------------------------------- render: the walkthrough */
@@ -683,7 +712,7 @@ function init() {
     state.tmode = "years";
     $("T").hidden = false; $("expiry").hidden = true;
     document.querySelector(".quote-detail")?.remove();
-    $("chain-panel").hidden = true;
+    $("chain-section").hidden = true;
     chainData = null;
     $("quote-status").className = "hint";
     $("quote-status").textContent = "Pulls spot, realized volatility and dividend yield.";

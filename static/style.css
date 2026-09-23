@@ -1,422 +1,562 @@
-/* Dense, quiet, numeric. The point of this page is that the numbers are legible
-   and the reasoning is next to them, so nothing here competes with the data. */
+/* Options Pricer
+ *
+ * The page has two voices and they get two typefaces, which is the one
+ * deliberate idea here rather than a decoration:
+ *
+ *   THE INSTRUMENT  - every number, every input, every greek. Set in mono with
+ *                     tabular figures so digits line up in columns and a price
+ *                     does not reflow as it changes.
+ *   THE EXPLANATION - the derivation, the prose, the reasoning. Set in a serif,
+ *                     because it is textbook voice and should read like one.
+ *
+ * Light, not dark. Every trading dashboard is dark with one bright accent,
+ * which is exactly why it reads as templated, and it is also how the previous
+ * version of this page collected 43 separate contrast failures. Paper and ink
+ * solves both problems at once.
+ *
+ * No cards. Grouping is done with whitespace and hairline rules. Boxing each
+ * section in a bordered panel, then boxing things inside those panels, is the
+ * most recognisable machine-made layout there is.
+ */
 
 :root {
-  --bg: #0e1116;
-  --panel: #161b22;
-  --panel-2: #1c2230;
-  --line: #2a3240;
-  --line-soft: #202836;
-  --ink: #e6edf3;
-  --ink-dim: #9aa7b6;
-  --ink-faint: #6b7889;
-  --accent: #58a6ff;
-  --good: #3fb950;
-  --bad: #f85149;
-  --warn: #d29922;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+  /* Paper is very slightly warm, ink is not pure black. Pure #fff on #000 is
+     harsh on screen and reads as a default rather than a choice. */
+  --paper: #fbfaf7;
+  --paper-sunk: #f3f1ec;
+  --ink: #16181c;
+  --ink-soft: #3d434c;
+  --ink-mute: #656c76;   /* measured 5.08:1 on paper, past the 4.5:1 AA bar */
+  --rule: #e2ded5;
+  --rule-soft: #eeebe4;
+
+  /* One accent, a deep ink blue. Deep rather than bright: it sits next to
+     dense numerals and must not shout over them. */
+  --accent: #1a3e6f;
+  --accent-soft: #e8eef6;
+
+  --pos: #1d6b45;
+  --neg: #9e2b24;
+  --flag: #8a5a12;
+
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Charter, Georgia, serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --gutter: 40px;
 }
 
 * { box-sizing: border-box; }
 
+html { -webkit-text-size-adjust: 100%; }
+
 body {
   margin: 0;
-  background: var(--bg);
+  background: var(--paper);
   color: var(--ink);
   font-family: var(--sans);
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: 15px;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
 
-/* ---------------------------------------------------------------- header */
+/* Tabular figures wherever numbers live, so columns align and a changing value
+   does not shift the layout under the cursor. */
+.mono, input, td.num, .stat-value, .greek-val {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ------------------------------------------------------------------ header */
 
 header {
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
   position: sticky;
   top: 0;
   z-index: 20;
 }
 
 .header-inner {
-  max-width: 1500px;
+  max-width: 1180px;
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--gutter);
   display: flex;
   align-items: center;
-  gap: 28px;
-  height: 56px;
+  gap: 14px 28px;
+  flex-wrap: wrap;
+  /* min-height, not height. A fixed height clips its own contents the moment
+     they wrap, which is what happened to the title at phone width. */
+  min-height: 64px;
 }
 
-.brand { font-weight: 650; letter-spacing: -0.01em; font-size: 15px; }
-.brand span { color: var(--ink-faint); font-weight: 400; margin-left: 10px; font-size: 13px; }
+.brand {
+  font-family: var(--serif);
+  font-size: 19px;
+  letter-spacing: -0.01em;
+}
+.brand span {
+  font-family: var(--sans);
+  color: var(--ink-mute);
+  font-size: 13px;
+  margin-left: 12px;
+}
 
-nav { display: flex; gap: 4px; margin-left: auto; }
+nav { display: flex; gap: 26px; margin-left: auto; height: 100%; align-items: stretch; }
 
 nav button {
   background: none;
-  border: 1px solid transparent;
-  color: var(--ink-dim);
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--ink-mute);
   font-family: var(--sans);
-  font-size: 13px;
-  padding: 6px 14px;
-  border-radius: 6px;
+  font-size: 14px;
+  padding: 0 2px;
   cursor: pointer;
+  letter-spacing: 0.01em;
 }
-nav button:hover { color: var(--ink); background: var(--panel-2); }
-nav button[aria-selected="true"] {
-  color: var(--ink);
-  background: var(--panel-2);
-  border-color: var(--line);
-}
+nav button:hover { color: var(--ink); }
+nav button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
 
-main { max-width: 1500px; margin: 0 auto; padding: 24px; }
+main { max-width: 1180px; margin: 0 auto; padding: 0 var(--gutter) 96px; }
 
-/* ----------------------------------------------------------------- layout */
+/* ------------------------------------------------------------------ layout */
 
-.layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 20px; align-items: start; }
-
-@media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
-
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 20px;
+.layout {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 56px;
+  align-items: start;
+  padding-top: 40px;
 }
 
-.panel > h2 {
-  margin: 0 0 14px;
+/* The rail must be as tall as the column beside it, or a sticky child has no
+   room to travel in and simply scrolls away with the page. min-width:0 so the
+   rail itself can never become the thing that widens the page. */
+.layout > aside { align-self: stretch; min-width: 0; }
+.layout > * { min-width: 0; }
+
+@media (max-width: 620px) {
+  .brand span { display: none; }
+  .brand { font-size: 17px; }
+}
+
+@media (max-width: 900px) {
+  :root { --gutter: 20px; }
+  /* Also minmax(0, 1fr): the desktop rule above already guards its content
+     column this way, and dropping the guard in the mobile override is what let
+     the rail's content width propagate out to the page. */
+  .layout { grid-template-columns: minmax(0, 1fr); gap: 36px; }
+  aside.controls { position: static; }
+  .price-main { font-size: 54px; }
+}
+
+/* A section is a heading, a hairline, and space. Not a box. */
+section.block { padding-top: 44px; }
+
+h2.section {
+  font-family: var(--sans);
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--ink-faint);
+  letter-spacing: 0.1em;
   font-weight: 600;
+  color: var(--ink-mute);
+  margin: 0 0 4px;
 }
+.section-rule { height: 1px; background: var(--rule); margin-bottom: 24px; }
 
-aside.controls { position: sticky; top: 80px; }
+.section-head { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+.section-head .spacer { flex: 1; }
 
-/* ----------------------------------------------------------------- inputs */
+/* ------------------------------------------------------------------ inputs */
 
-.field { margin-bottom: 12px; }
-.field label {
+aside.controls { position: sticky; top: 96px; }
+
+.field { margin-bottom: 18px; }
+.field > label {
   display: block;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ink-faint);
-  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--ink-mute);
+  margin-bottom: 6px;
+  letter-spacing: 0.01em;
 }
-.field label .lit { text-transform: none; font-family: var(--mono); }
-.field .hint { text-transform: none; letter-spacing: 0; color: var(--ink-faint); font-size: 11px; }
+.field .lit { font-family: var(--mono); color: var(--ink-soft); }
+.field .hint { color: var(--ink-mute); font-size: 12px; }
 
 input[type="text"], input[type="number"], input[type="date"], select {
   width: 100%;
-  background: var(--bg);
-  border: 1px solid var(--line);
+  /* Form controls carry an INTRINSIC minimum width from their default size,
+     which a grid or flex track then floors at. That intrinsic floor is the
+     actual mechanism behind the phone overflow: the track cannot shrink past
+     it, so the rail demanded more width than the viewport had and pushed the
+     Fetch button off screen. min-width:0 lets them shrink; the minmax(0, 1fr)
+     tracks then have something that can actually get smaller. */
+  min-width: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--rule);
   color: var(--ink);
   font-family: var(--mono);
-  font-size: 13px;
-  padding: 7px 9px;
-  border-radius: 5px;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  padding: 5px 2px;
+  border-radius: 0;
 }
-input:focus, select:focus { outline: none; border-color: var(--accent); }
+input:focus, select:focus { outline: none; border-bottom-color: var(--accent); }
 
-.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+select {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-size: 13px;
+  background: var(--paper);
+  width: auto;
+}
 
-.seg { display: flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+/* minmax(0, 1fr), not a bare 1fr. A bare 1fr is minmax(AUTO, 1fr), so the
+   track cannot shrink below its content's min-content width. Number inputs
+   report about 250px each, so this pair demanded 520px and pushed the whole
+   page wider than a phone viewport, taking the Fetch button off screen
+   entirely. Same family as the flexbox min-width:auto trap. */
+.row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+
+/* A segmented control as text, not as chunky buttons. */
+.seg { display: flex; gap: 18px; }
 .seg button {
-  flex: 1;
-  background: var(--bg);
+  background: none;
   border: none;
-  color: var(--ink-dim);
+  border-bottom: 1px solid transparent;
+  color: var(--ink-mute);
+  font-family: var(--sans);
+  font-size: 14px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.seg button:hover { color: var(--ink); }
+.seg button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+
+.ticker-row { display: flex; gap: 10px; align-items: baseline; }
+.ticker-row input { flex: 1; text-transform: uppercase; letter-spacing: 0.04em; }
+.ticker-row button {
+  flex: none;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 0 0 3px;
+  cursor: pointer;
+}
+.ticker-row button[disabled] { opacity: 0.45; cursor: default; }
+
+.link-btn {
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-mute);
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 0 0 3px;
+  cursor: pointer;
+}
+.link-btn:hover { color: var(--ink); border-bottom-color: var(--ink); }
+
+#quote-status { font-size: 12px; margin-top: 8px; color: var(--ink-mute); }
+#quote-status.ok { color: var(--pos); }
+#quote-status.bad { color: var(--neg); }
+
+/* Block, with its own rule above it. Without display:block this sits inline
+   and the preceding line runs straight into it. */
+.quote-detail .warn-note {
+  display: block;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule-soft);
   font-family: var(--sans);
   font-size: 12px;
-  padding: 7px 0;
-  cursor: pointer;
+  line-height: 1.5;
+  color: var(--flag);
 }
-.seg button + button { border-left: 1px solid var(--line); }
-.seg button[aria-pressed="true"] { background: var(--panel-2); color: var(--ink); }
 
-/* ------------------------------------------------------------- price cards */
-
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-
-.card {
-  background: var(--panel-2);
-  border: 1px solid var(--line-soft);
-  border-radius: 6px;
-  padding: 12px 14px;
+.quote-detail {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule-soft);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-mute);
+  line-height: 1.85;
 }
-.card .k {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ink-faint);
-  margin-bottom: 5px;
+
+/* --------------------------------------------------------------- the price */
+
+/* The hero is one number, because one number is what the tool is for. */
+.price-hero { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+
+.price-main {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 76px;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  font-weight: 500;
 }
-.card .v { font-family: var(--mono); font-size: 21px; font-weight: 550; letter-spacing: -0.02em; }
-.card .sub { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-top: 3px; }
-.card.primary { border-color: var(--accent); }
-.card.primary .v { color: var(--accent); }
+/* Decimals held back so the eye lands on the dollars first. */
+.price-main .frac { font-size: 0.46em; color: var(--ink-mute); letter-spacing: -0.01em; }
 
-/* ----------------------------------------------------------------- tables */
+.price-caption {
+  font-family: var(--serif);
+  font-size: 17px;
+  color: var(--ink-soft);
+  margin-top: 16px;
+  max-width: 64ch;
+}
+.price-caption b {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink);
+}
 
-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 48px;
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--rule-soft);
+}
+.stat { padding: 4px 0; }
+.stat-label { font-size: 12px; color: var(--ink-mute); letter-spacing: 0.02em; margin-bottom: 4px; }
+.stat-value { font-size: 19px; letter-spacing: -0.01em; }
+.stat-note { font-size: 12px; color: var(--ink-mute); margin-top: 3px; }
+
+/* --------------------------------------------------------------- the table */
+
+/* Tables scroll sideways rather than forcing the whole page wide. The option
+   chain is six columns and will not fit a phone; a table that scrolls is fine,
+   a page with a horizontal scrollbar is not. Verified on desktop only: this
+   harness pins the layout viewport near 1470px, so the phone rendering is
+   reasoned about rather than seen. */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+table { width: 100%; border-collapse: collapse; min-width: 520px; }
+
 th {
   text-align: left;
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ink-faint);
+  font-size: 12px;
   font-weight: 600;
-  padding: 0 10px 8px;
-  border-bottom: 1px solid var(--line);
+  color: var(--ink-mute);
+  letter-spacing: 0.02em;
+  padding: 0 14px 10px 0;
+  border-bottom: 1px solid var(--rule);
 }
-td { padding: 9px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+th.num { text-align: right; }
+
+td { padding: 13px 14px 13px 0; border-bottom: 1px solid var(--rule-soft); vertical-align: baseline; }
+td.num { text-align: right; white-space: nowrap; }
+/* A note living in the same cell as a number inherits nowrap and forces the
+   whole column wide, which crushes whatever sits beside it. */
+td.num .greek-raw { white-space: normal; }
 tbody tr:last-child td { border-bottom: none; }
-td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
-/* The raw-value footnote lives in the same cell as the number. Without this it
-   inherits nowrap and forces the whole column wide, crushing the formula. */
-td.num .greek-units { white-space: normal; text-align: right; }
 
-.greek-name { font-weight: 600; }
-.greek-sym { color: var(--ink-faint); font-family: var(--mono); margin-left: 6px; }
-.greek-partial { font-family: var(--mono); font-size: 12px; color: var(--accent); }
-.greek-formula { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); word-break: break-word; }
-.greek-meaning { color: var(--ink-dim); font-size: 12.5px; }
-.greek-desk { color: var(--ink-faint); font-size: 12px; margin-top: 6px; }
-.greek-units { color: var(--ink-faint); font-size: 11px; font-family: var(--mono); }
+.greek-name { font-size: 15px; }
+.greek-sym { font-family: var(--mono); color: var(--ink-mute); margin-left: 7px; }
+.greek-partial { font-family: var(--mono); font-size: 13px; color: var(--accent); margin-top: 3px; }
+.greek-val { font-size: 17px; }
+.greek-raw { font-size: 12px; color: var(--ink-mute); margin-top: 4px; }
+.greek-meaning { font-family: var(--serif); font-size: 15px; color: var(--ink-soft); }
 
-details.desk > summary {
-  cursor: pointer;
-  color: var(--accent);
-  font-size: 11.5px;
-  list-style: none;
-  margin-top: 5px;
+/* -------------------------------------------------------------- the charts */
+
+svg.plot { display: block; width: 100%; height: auto; }
+svg.plot .axis { stroke: var(--rule); stroke-width: 1; }
+svg.plot .grid { stroke: var(--rule-soft); stroke-width: 1; }
+svg.plot .tick { fill: var(--ink-mute); font-family: var(--mono); font-size: 11px; }
+svg.plot .axis-label { fill: var(--ink-mute); font-family: var(--sans); font-size: 12px; }
+svg.plot .marker { stroke: var(--flag); stroke-width: 1; stroke-dasharray: 3 3; }
+svg.plot .marker-label { fill: var(--flag); font-family: var(--mono); font-size: 11px; }
+svg.plot path.series { fill: none; stroke-width: 1.7; }
+
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--ink-mute); }
+.legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; }
+
+.caption {
+  font-family: var(--serif);
+  font-size: 15px;
+  color: var(--ink-soft);
+  max-width: 72ch;
+  margin-top: 18px;
 }
-details.desk > summary::-webkit-details-marker { display: none; }
-details.desk > summary::before { content: "▸ "; }
-details.desk[open] > summary::before { content: "▾ "; }
+.caption strong { font-weight: 600; color: var(--ink); }
 
-/* ------------------------------------------------------------ check strip */
+/* ------------------------------------------------------------- the lattice */
+
+svg.lattice { display: block; width: 100%; height: auto; }
+svg.lattice .edge { stroke: var(--rule); stroke-width: 1; }
+svg.lattice .node { fill: var(--paper); stroke: var(--rule); }
+svg.lattice .node.ex { fill: #fdf5e3; stroke: var(--flag); }
+svg.lattice text { font-family: var(--mono); font-size: 11px; }
+svg.lattice .spot { fill: var(--ink-mute); }
+svg.lattice .val { fill: var(--ink); font-weight: 600; }
+svg.lattice .val.ex { fill: var(--flag); }
+
+/* --------------------------------------------------------------- the chain */
+
+table.chain td, table.chain th { font-size: 14px; }
+table.chain tbody tr { cursor: pointer; }
+table.chain tbody tr:hover td { background: var(--paper-sunk); }
+table.chain tr.atm td { background: var(--accent-soft); }
+table.chain tr.picked td { background: var(--accent-soft); box-shadow: inset 0 -2px 0 var(--accent); }
+table.chain .dim { color: var(--ink-mute); }
+table.chain .flagged { color: var(--flag); font-size: 12px; }
+table.chain .ours { color: var(--accent); font-weight: 600; }
+
+.compare {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid var(--rule);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 48px;
+}
+
+/* -------------------------------------------------------------- the checks */
 
 .check {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 10px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--line-soft);
-  font-size: 12.5px;
+  gap: 4px 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  font-size: 14px;
 }
 .check:last-child { border-bottom: none; }
-.check .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; align-self: center; }
-.check .dot.ok { background: var(--good); }
-.check .dot.no { background: var(--bad); }
-.check .label { flex: 1; }
-.check .got { font-family: var(--mono); white-space: nowrap; }
-.check .target { font-family: var(--mono); color: var(--ink-faint); white-space: nowrap; }
-.check .note { flex-basis: 100%; color: var(--ink-faint); font-size: 11.5px; padding-left: 17px; }
-
-.badge {
-  display: inline-block;
+.check .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; align-self: center; }
+.check .dot.ok { background: var(--pos); }
+.check .dot.no { background: var(--neg); }
+.check .label { flex: 1; min-width: 220px; }
+.check .got, .check .target {
   font-family: var(--mono);
-  font-size: 11px;
-  padding: 2px 7px;
-  border-radius: 4px;
-  border: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.badge.ok { color: var(--good); border-color: #23602f; background: #0d2a14; }
-.badge.no { color: var(--bad); border-color: #6a2020; background: #2a0f0f; }
-.badge.warn { color: var(--warn); border-color: #5c4611; background: #2a220d; }
-
-/* ----------------------------------------------------------------- charts */
-
-.chart-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
-.chart-head h2 { margin: 0; }
-.chart-head .spacer { flex: 1; }
-
-.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-dim); }
-.legend i { display: inline-block; width: 12px; height: 2px; vertical-align: middle; margin-right: 5px; }
-
-svg.plot { display: block; width: 100%; height: auto; }
-svg.plot .axis { stroke: var(--line); stroke-width: 1; }
-svg.plot .grid { stroke: var(--line-soft); stroke-width: 1; }
-svg.plot .tick { fill: var(--ink-faint); font-family: var(--mono); font-size: 10px; }
-svg.plot .axis-label { fill: var(--ink-faint); font-family: var(--sans); font-size: 11px; }
-svg.plot .marker { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 3 3; }
-svg.plot .marker-label { fill: var(--warn); font-family: var(--mono); font-size: 10px; }
-svg.plot path.series { fill: none; stroke-width: 1.6; }
-
-/* ------------------------------------------------------------- the lattice */
-
-svg.lattice .edge { stroke: var(--line); stroke-width: 1; }
-svg.lattice .node { fill: var(--panel-2); stroke: var(--line); }
-svg.lattice .node.ex { fill: #2a1f0d; stroke: var(--warn); }
-svg.lattice text { font-family: var(--mono); font-size: 9.5px; }
-svg.lattice .spot { fill: var(--ink-dim); }
-svg.lattice .val { fill: var(--ink); font-weight: 600; }
-svg.lattice .val.ex { fill: var(--warn); }
+.check .target { color: var(--ink-mute); }
+.check .note {
+  flex-basis: 100%;
+  font-family: var(--serif);
+  color: var(--ink-mute);
+  font-size: 14px;
+  padding-left: 20px;
+}
 
 /* --------------------------------------------------------- the walkthrough */
 
-.walk { max-width: 1020px; }
+.walk { max-width: 700px; }
+.walk section { margin-bottom: 64px; scroll-margin-top: 92px; }
 
-.walk section { margin-bottom: 34px; scroll-margin-top: 76px; }
-
-.walk h3 {
-  font-size: 17px;
-  margin: 0 0 4px;
-  letter-spacing: -0.01em;
-}
 .walk .eyebrow {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--accent);
-  font-weight: 600;
-  margin-bottom: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  margin-bottom: 8px;
 }
-.walk p { color: var(--ink-dim); margin: 0 0 12px; max-width: 78ch; }
+.walk h3 {
+  font-family: var(--serif);
+  font-size: 30px;
+  line-height: 1.22;
+  letter-spacing: -0.015em;
+  margin: 0 0 20px;
+  font-weight: 400;
+}
+.walk p {
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.68;
+  color: var(--ink-soft);
+  margin: 0 0 18px;
+}
 .walk p strong { color: var(--ink); font-weight: 600; }
+.walk .footnote { font-size: 15px; color: var(--ink-mute); }
 
 .eq {
   font-family: var(--mono);
-  background: var(--panel-2);
-  border-left: 2px solid var(--accent);
-  padding: 12px 16px;
-  border-radius: 0 5px 5px 0;
-  margin: 0 0 14px;
-  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+  background: var(--paper-sunk);
+  padding: 18px 20px;
+  border-radius: 3px;
+  margin: 0 0 22px;
+  font-size: 14px;
+  line-height: 1.7;
   overflow-x: auto;
   white-space: pre;
   color: var(--ink);
 }
 
-.code-block { border: 1px solid var(--line); border-radius: 7px; overflow: hidden; margin-bottom: 14px; }
-.code-block .code-head {
-  background: var(--panel-2);
-  border-bottom: 1px solid var(--line);
-  padding: 7px 12px;
+.code-block { margin-bottom: 22px; border: 1px solid var(--rule); border-radius: 3px; }
+.code-head {
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--rule);
   font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--ink-faint);
+  font-size: 12px;
+  color: var(--ink-mute);
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
+  background: var(--paper-sunk);
 }
-.code-block .code-head .live {
-  margin-left: auto;
-  color: var(--good);
-  font-size: 10.5px;
-}
+.code-head .live { margin-left: auto; color: var(--pos); }
 .code-block pre {
   margin: 0;
-  padding: 12px 14px;
+  padding: 16px;
   overflow-x: auto;
-  background: #0b0e13;
   font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 13px;
+  line-height: 1.6;
   color: var(--ink);
+  background: var(--paper);
 }
 
-.tok-kw { color: #ff7b72; }
-.tok-str { color: #a5d6ff; }
-.tok-com { color: #8b949e; font-style: italic; }
-.tok-num { color: #79c0ff; }
-.tok-def { color: #d2a8ff; }
+.tok-kw { color: #8f2d56; }
+.tok-str { color: #1d6b45; }
+.tok-com { color: var(--ink-mute); font-style: italic; }
+.tok-num { color: var(--accent); }
 
-.toc {
-  position: sticky;
-  top: 80px;
-  font-size: 12.5px;
+.toc { position: sticky; top: 96px; font-size: 14px; }
+.toc a {
+  display: block;
+  color: var(--ink-mute);
+  text-decoration: none;
+  padding: 5px 0 5px 14px;
+  border-left: 1px solid var(--rule);
+  line-height: 1.35;
 }
-.toc a { display: block; color: var(--ink-dim); text-decoration: none; padding: 4px 0 4px 10px; border-left: 2px solid var(--line-soft); }
 .toc a:hover { color: var(--ink); border-left-color: var(--accent); }
 
+/* ------------------------------------------------------------------ states */
+
 .err {
-  color: var(--bad);
+  color: var(--neg);
+  font-size: 14px;
+  background: #fbf0ef;
+  border-left: 2px solid var(--neg);
+  padding: 12px 16px;
+  border-radius: 0 3px 3px 0;
+}
+
+.badge {
+  display: inline-block;
   font-family: var(--mono);
   font-size: 12px;
-  background: #2a0f0f;
-  border: 1px solid #6a2020;
-  border-radius: 5px;
-  padding: 10px 12px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--rule);
+  color: var(--ink-mute);
 }
-
-.footnote { color: var(--ink-faint); font-size: 12px; margin-top: 8px; }
-
-/* ------------------------------------------------------------ ticker fetch */
-
-.ticker-row { display: flex; gap: 6px; }
-.ticker-row input { flex: 1; text-transform: uppercase; }
-.ticker-row button {
-  flex: none;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  color: var(--ink);
-  font-family: var(--sans);
-  font-size: 12px;
-  padding: 0 12px;
-  border-radius: 5px;
-  cursor: pointer;
-}
-.ticker-row button:hover { border-color: var(--accent); color: var(--accent); }
-.ticker-row button[disabled] { opacity: 0.5; cursor: default; }
-
-#quote-status.ok { color: var(--good); }
-#quote-status.bad { color: var(--bad); }
-
-.quote-detail {
-  margin-top: 8px;
-  padding: 9px 10px;
-  background: var(--panel-2);
-  border: 1px solid var(--line-soft);
-  border-radius: 5px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink-dim);
-  line-height: 1.7;
-}
-.quote-detail .warn-note {
-  color: var(--warn);
-  font-family: var(--sans);
-  font-size: 11px;
-  display: block;
-  margin-top: 7px;
-  padding-top: 7px;
-  border-top: 1px solid var(--line-soft);
-  line-height: 1.45;
-}
-
-/* -------------------------------------------------------- the option chain */
-
-table.chain { font-family: var(--mono); font-size: 12px; table-layout: auto; }
-table.chain th { font-family: var(--sans); }
-table.chain td { padding: 5px 10px; }
-table.chain tbody tr { cursor: pointer; }
-table.chain tbody tr:hover { background: var(--panel-2); }
-table.chain tr.atm { background: #16202c; }
-table.chain tr.atm td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
-table.chain tr.picked { background: #12243a; }
-table.chain tr.picked td:first-child { box-shadow: inset 2px 0 0 var(--good); }
-table.chain .dim { color: var(--ink-faint); }
-table.chain .bad-iv { color: var(--warn); font-size: 11px; }
-table.chain .ours { color: var(--accent); font-weight: 600; }
-
-.chain-compare {
-  margin-top: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel-2);
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.8;
-}
-.chain-compare b { color: var(--ink); }
+.badge.ok { color: var(--pos); border-color: #bcd9c8; background: #eef7f1; }
+.badge.no { color: var(--neg); border-color: #e4bdba; background: #fbf0ef; }

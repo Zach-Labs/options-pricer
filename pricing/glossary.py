@@ -70,7 +70,7 @@ GREEKS: list[dict[str, str]] = [
         "formula": "S·e^(-qT)·φ(d₁)·√T",
         "units": "change in option value per 1.00 (100 vol points) change in sigma",
         "display": "divided by 100, so the number shown is per 1 vol point",
-        "scale": "÷100, per vol point",
+        "scale": "÷100 per vol pt",
         "meaning": "How much the option is worth for each extra point of implied volatility.",
         "desk": (
             "Once you quote in vol rather than dollars, vega is your actual inventory: "
@@ -89,7 +89,7 @@ GREEKS: list[dict[str, str]] = [
         "formula": "-S·e^(-qT)·φ(d₁)·σ/(2√T) ∓ r·K·e^(-rT)·Φ(±d₂) ± q·S·e^(-qT)·Φ(±d₁)",
         "units": "change in option value per year of time passing",
         "display": "divided by 365, so the number shown is per calendar day",
-        "scale": "÷365, per day",
+        "scale": "÷365 per day",
         "meaning": "Time decay. Normally negative for a long option: one day less for the kink to pay off.",
         "desk": (
             "Theta is the rent you pay for gamma, and the pricing equation ties the two "
@@ -108,7 +108,7 @@ GREEKS: list[dict[str, str]] = [
         "formula": "call: K·T·e^(-rT)·Φ(d₂)   put: -K·T·e^(-rT)·Φ(-d₂)",
         "units": "change in option value per 1.00 (100 percentage points) change in r",
         "display": "divided by 100, so the number shown is per 1 percentage point",
-        "scale": "÷100, per 1% of r",
+        "scale": "÷100 per 1% r",
         "meaning": "Sensitivity to the risk-free rate.",
         "desk": (
             "Usually minor for short-dated equity options, and it is the greek people "
@@ -161,7 +161,7 @@ GREEKS: list[dict[str, str]] = [
         "formula": "±q·e^(-qT)·Φ(±d₁) - e^(-qT)·φ(d₁)·[2(r-q)T - d₂σ√T] / (2Tσ√T)",
         "units": "change in delta per year of time passing",
         "display": "divided by 365, so the number shown is delta drift per calendar day",
-        "scale": "÷365, per day",
+        "scale": "÷365 per day",
         "meaning": "How delta decays purely from time passing, with the stock going nowhere.",
         "desk": (
             "Also called delta decay. It matters into expiry and around large open "
