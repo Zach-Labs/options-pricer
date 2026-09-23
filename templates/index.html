@@ -177,6 +177,42 @@
         long an option.
       </div>
     </section>
+
+    <section class="block">
+      <div class="section-head">
+        <div style="flex:1">
+          <h2 class="section">Lattice convergence</h2>
+        </div>
+        <div class="legend">
+          <span><i style="background:#1a3e6f"></i>tree price</span>
+          <span><i style="background:#8a5a12"></i>closed form</span>
+        </div>
+      </div>
+      <div class="section-rule"></div>
+      <svg class="plot" id="conv-plot" viewBox="0 0 900 300" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="caption">
+        Tree price against step count. This should be a damped <strong>zigzag</strong>, not a
+        smooth curve: the error is roughly O(1/N), but its sign flips depending on where the
+        strike falls relative to the terminal nodes, and that alternates as N changes. A
+        perfectly smooth line here would mean something is wrong.
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="section-head">
+        <div style="flex:1">
+          <h2 class="section">The tree itself</h2>
+        </div>
+        <select id="lat-steps">
+          <option>3</option><option>4</option><option selected>5</option>
+          <option>6</option><option>7</option><option>8</option>
+        </select>
+        <div class="legend"><span><i style="background:#8a5a12"></i>exercise early here</span></div>
+      </div>
+      <div class="section-rule"></div>
+      <svg class="lattice" id="lat-plot" viewBox="0 0 900 400" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="caption" id="lat-note"></div>
+    </section>
   </div>
 
 </div>
@@ -527,14 +563,6 @@ V = e^(-r·dt)·[ q·V_u + (1 - q)·V_d ],    q = (e^((r-q_div)·dt) - d) / (u -
       </p>
       <div class="code-block" data-symbol="binomial/build_lattice"></div>
 
-      <svg class="plot" id="conv-plot" viewBox="0 0 900 300" preserveAspectRatio="xMidYMid meet"></svg>
-      <p class="footnote">
-        Tree price against step count, for the contract currently loaded on the Model tab. It
-        should be a damped <strong>zigzag</strong>, not a smooth curve: the error is roughly
-        O(1/N), but its sign flips depending on where the strike falls relative to the terminal
-        nodes, and that alternates as N changes. A perfectly smooth line here would mean
-        something is wrong.
-      </p>
     </section>
 
     <section id="w-backward">
@@ -580,16 +608,6 @@ V = e^(-r·dt)·[ q·V_u + (1 - q)·V_d ],    q = (e^((r-q_div)·dt) - d) / (u -
         benefit disappears and the American put collapses onto the European one.
       </p>
       <div class="code-block" data-symbol="binomial/early_exercise_premium"></div>
-
-      <div class="section-head" style="margin-bottom:10px">
-        <div style="flex:1"></div>
-        <select id="lat-steps">
-          <option>3</option><option>4</option><option selected>5</option>
-          <option>6</option><option>7</option><option>8</option>
-        </select>
-      </div>
-      <svg class="lattice" id="lat-plot" viewBox="0 0 900 400" preserveAspectRatio="xMidYMid meet"></svg>
-      <p class="footnote" id="lat-note"></p>
       <p class="footnote">
         Note the choice to difference on a single lattice rather than against the closed form. The
         discretisation error is common to both legs and cancels, so what is left is the
