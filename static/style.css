@@ -26,7 +26,7 @@
   --paper-sunk: #f3f1ec;
   --ink: #16181c;
   --ink-soft: #3d434c;
-  --ink-mute: #656c76;   /* 5.4:1 on paper, comfortably past AA */
+  --ink-mute: #656c76;   /* measured 5.08:1 on paper, past the 4.5:1 AA bar */
   --rule: #e2ded5;
   --rule-soft: #eeebe4;
 
@@ -84,8 +84,11 @@ header {
   padding: 0 var(--gutter);
   display: flex;
   align-items: center;
-  gap: 28px;
-  height: 64px;
+  gap: 14px 28px;
+  flex-wrap: wrap;
+  /* min-height, not height. A fixed height clips its own contents the moment
+     they wrap, which is what happened to the title at phone width. */
+  min-height: 64px;
 }
 
 .brand {
@@ -129,12 +132,22 @@ main { max-width: 1180px; margin: 0 auto; padding: 0 var(--gutter) 96px; }
 }
 
 /* The rail must be as tall as the column beside it, or a sticky child has no
-   room to travel in and simply scrolls away with the page. */
-.layout > aside { align-self: stretch; }
+   room to travel in and simply scrolls away with the page. min-width:0 so the
+   rail itself can never become the thing that widens the page. */
+.layout > aside { align-self: stretch; min-width: 0; }
+.layout > * { min-width: 0; }
+
+@media (max-width: 620px) {
+  .brand span { display: none; }
+  .brand { font-size: 17px; }
+}
 
 @media (max-width: 900px) {
   :root { --gutter: 20px; }
-  .layout { grid-template-columns: 1fr; gap: 36px; }
+  /* Also minmax(0, 1fr): the desktop rule above already guards its content
+     column this way, and dropping the guard in the mobile override is what let
+     the rail's content width propagate out to the page. */
+  .layout { grid-template-columns: minmax(0, 1fr); gap: 36px; }
   aside.controls { position: static; }
   .price-main { font-size: 54px; }
 }
@@ -173,6 +186,13 @@ aside.controls { position: sticky; top: 96px; }
 
 input[type="text"], input[type="number"], input[type="date"], select {
   width: 100%;
+  /* Form controls carry an INTRINSIC minimum width from their default size,
+     which a grid or flex track then floors at. That intrinsic floor is the
+     actual mechanism behind the phone overflow: the track cannot shrink past
+     it, so the rail demanded more width than the viewport had and pushed the
+     Fetch button off screen. min-width:0 lets them shrink; the minmax(0, 1fr)
+     tracks then have something that can actually get smaller. */
+  min-width: 0;
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--rule);
@@ -194,7 +214,12 @@ select {
   width: auto;
 }
 
-.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+/* minmax(0, 1fr), not a bare 1fr. A bare 1fr is minmax(AUTO, 1fr), so the
+   track cannot shrink below its content's min-content width. Number inputs
+   report about 250px each, so this pair demanded 520px and pushed the whole
+   page wider than a phone viewport, taking the Fetch button off screen
+   entirely. Same family as the flexbox min-width:auto trap. */
+.row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
 
 /* A segmented control as text, not as chunky buttons. */
 .seg { display: flex; gap: 18px; }
