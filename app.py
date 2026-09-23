@@ -48,6 +48,15 @@ SOURCE_FILES = {
     "test_pricing": "tests/test_pricing.py",
 }
 
+# The individual functions the walkthrough is allowed to render. Same reasoning
+# as SOURCE_FILES above: name what is exposed rather than exposing a namespace.
+SOURCE_SYMBOLS = {
+    "bsm": ("norm_cdf", "norm_pdf", "d1_d2", "price", "greeks", "parity_residual",
+            "greeks_display"),
+    "binomial": ("build_lattice", "price_tree", "tree_delta", "early_exercise_premium",
+                 "convergence", "lattice_detail"),
+}
+
 
 def parse_inputs(payload: dict) -> bsm.Inputs:
     """Build Inputs from the form, resolving an expiry date into years if given.
@@ -252,6 +261,17 @@ def api_symbol(module: str, symbol: str):
     mod = mods.get(module)
     if mod is None:
         return jsonify({"error": f"unknown module {module!r}"}), 404
+
+    # Allowlist, not a bare getattr. A module's namespace contains everything it
+    # imported, so getattr(bsm, "dataclass") happily returns inspect.getsource
+    # of the stdlib file that defines it, which is neither in this repo nor
+    # something the walkthrough ever asks for. Localhost-only binding makes the
+    # real-world risk minimal, but the docstring above claims this serves "the
+    # source of the exact object it just called", and that claim should be true
+    # rather than nearly true.
+    if symbol not in SOURCE_SYMBOLS.get(module, ()):
+        return jsonify({"error": f"{module}.{symbol} is not an exposed symbol"}), 404
+
     obj = getattr(mod, symbol, None)
     if obj is None:
         return jsonify({"error": f"{module}.{symbol} does not exist"}), 404
