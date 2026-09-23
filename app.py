@@ -220,6 +220,43 @@ def api_convergence():
     })
 
 
+@app.post("/api/implied")
+def api_implied():
+    """Solve for the volatility that reproduces an observed market price.
+
+    This is the replacement for the option-chain browser, and it is a better
+    tool for the job. The chain pulled last-traded prices off a free feed,
+    which are stale on any thinly traded strike, so the volatilities it
+    produced in the wings were noise that had to be caveated on screen. Typing
+    in a mark from a real terminal removes the weakest link: the price comes
+    from wherever the price is good, and this end does the part that is
+    actually ours.
+    """
+    payload = request.get_json(force=True)
+    p = parse_inputs(payload)
+    kind = payload.get("kind", "call")
+    try:
+        target = float(payload.get("market_price"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "no market price given"}), 400
+
+    try:
+        sigma, uncertainty = bsm.implied_vol_with_uncertainty(
+            target, p.S, p.K, p.T, p.r, kind, q=p.q
+        )
+    except bsm.NoImpliedVol as exc:
+        return jsonify({"error": str(exc)}), 422
+
+    return jsonify({
+        "implied_vol": sigma,
+        "uncertainty": uncertainty,
+        "reprices_to": bsm.price(
+            bsm.Inputs(S=p.S, K=p.K, T=p.T, r=p.r, sigma=sigma, q=p.q), kind
+        ),
+        "market_price": target,
+    })
+
+
 @app.post("/api/lattice")
 def api_lattice():
     """A small tree, node by node, with the exercise boundary marked."""
@@ -260,36 +297,6 @@ def api_quote(ticker: str):
     """
     try:
         return jsonify(market.fetch_quote(ticker).to_dict())
-    except market.MarketDataUnavailable as exc:
-        return jsonify({"error": str(exc)}), 503
-
-
-@app.get("/api/expiries/<ticker>")
-def api_expiries(ticker: str):
-    """Listed expiry dates for a ticker."""
-    try:
-        return jsonify({"ticker": ticker.upper(), "expiries": market.fetch_expiries(ticker)})
-    except market.MarketDataUnavailable as exc:
-        return jsonify({"error": str(exc)}), 503
-
-
-@app.get("/api/chain/<ticker>/<expiry>")
-def api_chain(ticker: str, expiry: str):
-    """One expiry's option chain, with implied volatility we computed ourselves.
-
-    The implied vol on each row comes from inverting OUR pricer against that
-    contract's traded price, not from the feed's own field. Measured against
-    live AAPL, that field reads between 0.025% and 0.099% across every expiry,
-    which is not a volatility. It is returned alongside anyway so the two can
-    be compared on screen instead of one being silently trusted.
-    """
-    kind = request.args.get("kind", "call")
-    r = float(request.args.get("r", 0.05))
-    try:
-        quote = market.fetch_quote(ticker)
-        return jsonify(market.fetch_chain(
-            ticker, expiry, quote.spot, r, quote.dividend_yield, kind,
-        ))
     except market.MarketDataUnavailable as exc:
         return jsonify({"error": str(exc)}), 503
 

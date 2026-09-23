@@ -404,26 +404,6 @@ svg.lattice .spot { fill: var(--ink-mute); }
 svg.lattice .val { fill: var(--ink); font-weight: 600; }
 svg.lattice .val.ex { fill: var(--flag); }
 
-/* --------------------------------------------------------------- the chain */
-
-table.chain td, table.chain th { font-size: 14px; }
-table.chain tbody tr { cursor: pointer; }
-table.chain tbody tr:hover td { background: var(--paper-sunk); }
-table.chain tr.atm td { background: var(--accent-soft); }
-table.chain tr.picked td { background: var(--accent-soft); box-shadow: inset 0 -2px 0 var(--accent); }
-table.chain .dim { color: var(--ink-mute); }
-table.chain .flagged { color: var(--flag); font-size: 12px; }
-table.chain .ours { color: var(--accent); font-weight: 600; }
-
-.compare {
-  margin-top: 26px;
-  padding-top: 22px;
-  border-top: 1px solid var(--rule);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 48px;
-}
-
 /* -------------------------------------------------------------- the checks */
 
 .check {

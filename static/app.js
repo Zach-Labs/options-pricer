@@ -342,7 +342,6 @@ async function fetchQuote() {
   btn.disabled = true;
   status.className = "hint";
   status.textContent = `fetching ${sym}...`;
-  document.querySelector(".quote-detail")?.remove();
 
   try {
     const q = await get(`/api/quote/${encodeURIComponent(sym)}`);
@@ -366,25 +365,12 @@ async function fetchQuote() {
     const rv = q.realized_vol_1y ?? q.realized_vol_30d;
     if (rv !== null && rv !== undefined) $("sigma").value = rv.toFixed(8);
 
+    clearImplied();
     status.className = "hint ok";
-    status.textContent = `${q.ticker} ${q.spot.toFixed(2)} ${q.currency}`;
-
-    const pct = (x) => (x === null || x === undefined ? "n/a" : (x * 100).toFixed(2) + "%");
-    const detail = document.createElement("div");
-    detail.className = "quote-detail";
-    detail.innerHTML =
-      `spot          ${q.spot.toFixed(2)} ${q.currency}<br>` +
-      `as of         ${String(q.as_of).slice(0, 10)}<br>` +
-      `realized vol  ${pct(q.realized_vol_1y)} (1y) · ${pct(q.realized_vol_30d)} (30d)<br>` +
-      `div yield     ${pct(q.dividend_yield)} (${q.trailing_dividends.toFixed(2)} paid / spot)<br>` +
-      `source        ${q.source}<br>` +
-      `strike        ${Number($("K").value).toFixed(2)}, nearest listed` +
-      `<span class="warn-note">Sigma is <b>realized</b> vol, what the stock did. ` +
-      `Black-Scholes wants <b>implied</b> vol. Click a chain row for the real one.</span>`;
-    $("quote-status").after(detail);
+    status.textContent =
+      `${q.ticker} ${q.spot.toFixed(2)} ${q.currency} · ${String(q.as_of).slice(0, 10)}`;
 
     scheduleRefresh();
-    loadExpiries(sym);
   } catch (e) {
     status.className = "hint bad";
     status.textContent = e.message;
@@ -393,154 +379,47 @@ async function fetchQuote() {
   }
 }
 
-/* ------------------------------------------------------- the option chain */
+/* ---------------------------------------------------- implied volatility */
 
-let chainData = null;
+/* Type in a price from wherever the price is good, and solve for the
+ * volatility that reproduces it. This replaced an option-chain browser fed by
+ * a free feed's last-traded prices, which were stale on any thin strike and
+ * produced volatilities in the wings that were noise. The weak link there was
+ * the data, not the maths, so the data moved out and the maths stayed. */
 
-async function loadExpiries(ticker) {
+/* A market price belongs to ONE contract. Loading a different one has to clear
+ * it, or the panel keeps showing an implied vol solved for something else,
+ * which is worse than showing nothing because it looks current. */
+function clearImplied() {
+  $("market-price").value = "";
+  $("implied-status").textContent = "";
+  $("implied-status").className = "hint";
+}
+
+async function solveImplied() {
+  const raw = $("market-price").value.trim();
+  const status = $("implied-status");
+  if (!raw) { status.textContent = ""; status.className = "hint"; return; }
+
+  const body = payload();
+  body.market_price = parseFloat(raw);
+
   try {
-    const d = await get(`/api/expiries/${encodeURIComponent(ticker)}`);
-    const sel = $("chain-expiry");
-    sel.innerHTML = d.expiries.map((e) => `<option value="${e}">${e}</option>`).join("");
-    // Default to roughly three months out rather than the front week. The
-    // nearest expiries are the ones whose quotes are thinnest and most likely
-    // to be stale, which makes a bad first impression of a working chain.
-    const target = d.expiries.find((e) => (new Date(e) - new Date()) / 86400000 > 80);
-    if (target) sel.value = target;
-    $("chain-section").hidden = false;
-    await loadChain();
+    const d = await post("/api/implied", body);
+    $("sigma").value = d.implied_vol.toFixed(8);
+
+    // Show the precision, because it is not constant. Vega varies enormously
+    // across a chain, so the same price resolution pins vol to 1e-12 at the
+    // money and to a fraction of a point in the wings.
+    const pts = d.uncertainty * 100;
+    const precision = pts < 0.001 ? "" : ` ±${pts.toFixed(3)} pts`;
+    status.className = "hint ok";
+    status.textContent = `implied ${(d.implied_vol * 100).toFixed(3)}%${precision}`;
+    await refreshAll();
   } catch (e) {
-    $("chain-section").hidden = true;
+    status.className = "hint bad";
+    status.textContent = e.message;
   }
-}
-
-async function loadChain() {
-  const ticker = $("ticker").value.trim().toUpperCase();
-  const expiry = $("chain-expiry").value;
-  if (!ticker || !expiry) return;
-
-  $("chain-body").innerHTML = `<div class="footnote">loading ${ticker} ${expiry}...</div>`;
-  try {
-    chainData = await get(
-      `/api/chain/${encodeURIComponent(ticker)}/${encodeURIComponent(expiry)}` +
-      `?kind=${state.kind}&r=${encodeURIComponent($("r").value)}`
-    );
-    renderChain();
-  } catch (e) {
-    chainData = null;
-    $("chain-body").innerHTML = `<div class="err">${e.message}</div>`;
-  }
-}
-
-function renderChain() {
-  const d = chainData;
-  if (!d) return;
-
-  // Show a window around the money. A full 97-row chain is mostly deep wings
-  // with stale quotes, and the interesting structure is near the spot.
-  const near = d.rows
-    .filter((r) => Math.abs(r.strike - d.spot) <= d.spot * 0.15)
-    .sort((a, b) => a.strike - b.strike);
-
-  const withIv = near.filter((r) => r.implied_vol !== null);
-  $("chain-summary").textContent =
-    `${d.days_to_expiry} days · ${near.length} strikes near the money · ` +
-    `${withIv.length} inverted`;
-
-  const rows = near.map((r) => {
-    const atm = Math.abs(r.strike - d.spot) < d.spot * 0.008;
-    // Flag a row whose implied vol is real but imprecise. Vega varies by ten
-    // orders of magnitude across one chain, so the same price noise is
-    // invisible at the money and material in the wings.
-    const shaky = r.implied_vol !== null && r.implied_vol_uncertainty > 1e-5;
-    const iv = r.implied_vol !== null
-      ? `<span class="ours">${(r.implied_vol * 100).toFixed(2)}%</span>` +
-        (shaky ? `<span class="bad-iv" title="only pinned to about ${(r.implied_vol_uncertainty * 100).toFixed(3)} vol points here, because vega is small at this strike"> ±${(r.implied_vol_uncertainty * 100).toFixed(2)}</span>` : "")
-      : `<span class="bad-iv" title="${(r.implied_vol_error || "").replace(/"/g, "&quot;")}">no vol</span>`;
-    const yiv = r.yahoo_implied_vol !== null
-      ? `<span class="dim">${(r.yahoo_implied_vol * 100).toFixed(3)}%</span>` : "-";
-    return `<tr data-strike="${r.strike}" class="${atm ? "atm" : ""}">
-      <td>${r.strike.toFixed(2)}</td>
-      <td>${r.last_price.toFixed(2)}</td>
-      <td>${iv}</td>
-      <td>${yiv}</td>
-      <td class="dim">${r.volume.toFixed(0)}</td>
-      <td class="dim">${r.last_trade.slice(0, 10)}</td>
-    </tr>`;
-  }).join("");
-
-  $("chain-body").innerHTML = `
-    <table class="chain">
-      <thead><tr>
-        <th>Strike</th><th>Last traded</th>
-        <th>Implied vol (ours)</th><th>Implied vol (feed)</th>
-        <th>Volume</th><th>Last trade</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <div id="chain-compare"></div>`;
-
-  $("chain-body").querySelectorAll("tbody tr").forEach((tr) => {
-    tr.addEventListener("click", () => applyContract(parseFloat(tr.dataset.strike), tr));
-  });
-}
-
-async function applyContract(strike, tr) {
-  const d = chainData;
-  const row = d.rows.find((r) => r.strike === strike);
-  if (!row) return;
-
-  $("chain-body").querySelectorAll("tr").forEach((el) => el.classList.remove("picked"));
-  tr.classList.add("picked");
-
-  $("K").value = strike.toFixed(2);
-  $("T").value = d.T.toFixed(8);
-  state.tmode = "years";
-  $("T").hidden = false;
-  $("expiry").hidden = true;
-  [...$("seg-tmode").querySelectorAll("button")].forEach((b) =>
-    b.setAttribute("aria-pressed", String(b.dataset.val === "years")));
-
-  if (row.implied_vol !== null) $("sigma").value = row.implied_vol.toFixed(8);
-
-  await refreshAll();
-
-  // The point of the whole feature, made explicit: fed the market's own
-  // implied volatility, the model reproduces the market's own price. That is
-  // not a coincidence, it is what implied vol MEANS, and seeing the two land
-  // on the same number is the clearest possible demonstration of it.
-  const priced = await post("/api/price", payload());
-  const cmp = $("chain-compare");
-  if (!cmp) return;
-
-  if (row.implied_vol === null) {
-    cmp.innerHTML = `<div class="caption">
-      Loaded the ${strike.toFixed(2)} strike, but this contract has
-      <strong>no implied volatility</strong>: ${row.implied_vol_error}
-      Sigma was left at its previous value, so the price above is the model's, not the market's.
-    </div>`;
-    return;
-  }
-
-  const diff = priced.closed_form - row.last_price;
-  const cells = [
-    { k: "Market last traded", v: row.last_price.toFixed(4), n: "" },
-    { k: "Implied volatility", v: (row.implied_vol * 100).toFixed(4) + "%", n: "inverted from that price" },
-    { k: "Our model at that vol", v: priced.closed_form.toFixed(4), n: "" },
-    { k: "Difference", v: diff.toExponential(2), n: "" },
-  ];
-  cmp.innerHTML =
-    `<div class="compare">` +
-    cells.map((c) =>
-      `<div class="stat">
-         <div class="stat-label">${c.k}</div>
-         <div class="stat-value">${c.v}</div>
-         <div class="stat-note">${c.n}</div>
-       </div>`).join("") +
-    `</div>
-     <div class="caption">Fed the market&#8217;s own implied volatility, the formula reproduces
-     the market&#8217;s own price. That is not a coincidence, it is what implied volatility
-     means.</div>`;
 }
 
 /* -------------------------------------------------- render: the walkthrough */
@@ -635,6 +514,7 @@ async function loadVerify() {
 /* ------------------------------------------------------------------ wiring */
 
 let pending = null;
+let impliedPending = null;
 function scheduleRefresh() {
   clearTimeout(pending);
   pending = setTimeout(refreshAll, 140);
@@ -674,10 +554,7 @@ function init() {
   ["S", "K", "T", "r", "sigma", "q", "steps", "expiry"].forEach((id) =>
     $(id).addEventListener("input", scheduleRefresh));
 
-  wireSegment("seg-kind", "kind", () => {
-    // Calls and puts are different chains, so the table has to be refetched.
-    if (chainData) loadChain();
-  });
+  wireSegment("seg-kind", "kind");
   wireSegment("seg-style", "style");
   wireSegment("seg-tmode", "tmode", () => {
     const byDate = state.tmode === "date";
@@ -700,7 +577,10 @@ function init() {
   });
 
   $("btn-fetch").addEventListener("click", fetchQuote);
-  $("chain-expiry").addEventListener("change", loadChain);
+  $("market-price").addEventListener("input", () => {
+    clearTimeout(impliedPending);
+    impliedPending = setTimeout(solveImplied, 300);
+  });
   $("ticker").addEventListener("keydown", (e) => {
     if (e.key === "Enter") fetchQuote();
   });
@@ -711,9 +591,7 @@ function init() {
     $("steps").value = 500;
     state.tmode = "years";
     $("T").hidden = false; $("expiry").hidden = true;
-    document.querySelector(".quote-detail")?.remove();
-    $("chain-section").hidden = true;
-    chainData = null;
+      clearImplied();
     $("quote-status").className = "hint";
     $("quote-status").textContent = "Pulls spot, realized volatility and dividend yield.";
     [...$("seg-tmode").querySelectorAll("button")].forEach((b) =>
