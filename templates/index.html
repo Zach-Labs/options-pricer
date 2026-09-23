@@ -25,140 +25,137 @@
 <div class="layout">
 
   <aside class="controls">
-    <div class="panel">
-      <h2>Contract</h2>
+    <div class="field">
+      <label for="ticker">Ticker</label>
+      <div class="ticker-row">
+        <input type="text" id="ticker" value="AAPL" autocomplete="off" spellcheck="false">
+        <button id="btn-fetch" type="button">Fetch</button>
+      </div>
+      <div class="hint" id="quote-status">Pulls spot, volatility and dividend yield.</div>
+    </div>
 
+    <div class="field">
+      <label>Type</label>
+      <div class="seg" id="seg-kind">
+        <button data-val="call" aria-pressed="true">Call</button>
+        <button data-val="put" aria-pressed="false">Put</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Exercise</label>
+      <div class="seg" id="seg-style">
+        <button data-val="european" aria-pressed="true">European</button>
+        <button data-val="american" aria-pressed="false">American</button>
+      </div>
+    </div>
+
+    <div class="row2">
       <div class="field">
-        <label for="ticker">Ticker</label>
-        <div class="ticker-row">
-          <input type="text" id="ticker" value="AAPL" autocomplete="off" spellcheck="false">
-          <button id="btn-fetch" type="button">Fetch</button>
-        </div>
-        <div class="hint" id="quote-status">Pulls spot, realized volatility and dividend yield.</div>
+        <label for="S">Spot <span class="lit">S</span></label>
+        <input type="number" id="S" value="100" step="any">
       </div>
-
       <div class="field">
-        <label>Type</label>
-        <div class="seg" id="seg-kind">
-          <button data-val="call" aria-pressed="true">Call</button>
-          <button data-val="put" aria-pressed="false">Put</button>
-        </div>
+        <label for="K">Strike <span class="lit">K</span></label>
+        <input type="number" id="K" value="100" step="any">
       </div>
+    </div>
 
+    <div class="field">
+      <label>Expiry</label>
+      <div class="seg" id="seg-tmode" style="margin-bottom:10px">
+        <button data-val="years" aria-pressed="true">Years</button>
+        <button data-val="date" aria-pressed="false">Date</button>
+      </div>
+      <input type="number" id="T" value="1" step="any" min="0">
+      <input type="date" id="expiry" hidden>
+      <div class="hint" id="t-readout"></div>
+    </div>
+
+    <div class="row2">
       <div class="field">
-        <label>Exercise</label>
-        <div class="seg" id="seg-style">
-          <button data-val="european" aria-pressed="true">European</button>
-          <button data-val="american" aria-pressed="false">American</button>
-        </div>
+        <label for="r">Rate <span class="lit">r</span></label>
+        <input type="number" id="r" value="0.05" step="any">
       </div>
-
-      <div class="row2">
-        <div class="field">
-          <label for="S">Spot <span class="lit">S</span></label>
-          <input type="number" id="S" value="100" step="any">
-        </div>
-        <div class="field">
-          <label for="K">Strike <span class="lit">K</span></label>
-          <input type="number" id="K" value="100" step="any">
-        </div>
-      </div>
-
       <div class="field">
-        <label>Time to expiry</label>
-        <div class="seg" id="seg-tmode" style="margin-bottom:8px">
-          <button data-val="years" aria-pressed="true">Years</button>
-          <button data-val="date" aria-pressed="false">Date</button>
-        </div>
-        <input type="number" id="T" value="1" step="any" min="0">
-        <input type="date" id="expiry" hidden>
-        <div class="hint" id="t-readout"></div>
+        <label for="sigma">Vol <span class="lit">&#963;</span></label>
+        <input type="number" id="sigma" value="0.20" step="any" min="0">
       </div>
+    </div>
 
-      <div class="row2">
-        <div class="field">
-          <label for="r">Rate <span class="lit">r</span> <span class="hint">dec</span></label>
-          <input type="number" id="r" value="0.05" step="any">
-        </div>
-        <div class="field">
-          <label for="sigma">Vol <span class="lit">σ</span> <span class="hint">dec</span></label>
-          <input type="number" id="sigma" value="0.20" step="any" min="0">
-        </div>
+    <div class="row2">
+      <div class="field">
+        <label for="q">Dividend <span class="lit">q</span></label>
+        <input type="number" id="q" value="0" step="any">
       </div>
+      <div class="field">
+        <label for="steps">Tree steps</label>
+        <input type="number" id="steps" value="500" step="1" min="1" max="5000">
+      </div>
+    </div>
 
-      <div class="row2">
-        <div class="field">
-          <label for="q">Div yield <span class="lit">q</span></label>
-          <input type="number" id="q" value="0" step="any">
-        </div>
-        <div class="field">
-          <label for="steps">Tree steps</label>
-          <input type="number" id="steps" value="500" step="1" min="1" max="5000">
-        </div>
-      </div>
-
-      <div class="field" style="margin-top:14px">
-        <button id="btn-bench" class="seg" style="width:100%;padding:8px;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);border-radius:5px;cursor:pointer;font-size:12px">
-          Load the benchmark case
-        </button>
-        <div class="hint" style="margin-top:6px">S = K = 100, r = 5%, σ = 20%, T = 1</div>
-      </div>
+    <div class="field" style="margin-top:26px">
+      <button id="btn-bench" type="button" class="link-btn">Load the benchmark case</button>
+      <div class="hint" style="margin-top:8px">S = K = 100, r = 5%, &#963; = 20%, T = 1</div>
     </div>
   </aside>
 
   <div>
-    <div class="panel">
-      <h2>Premium</h2>
-      <div class="cards" id="cards"></div>
-      <div id="tree-note" class="footnote"></div>
-    </div>
+    <section class="block" style="padding-top:0">
+      <div class="price-hero" id="price-hero"></div>
+      <div class="price-caption" id="price-caption"></div>
+      <div class="stats" id="stats"></div>
+      <div id="tree-note" class="caption"></div>
+    </section>
 
-    <div class="panel" id="chain-panel" hidden>
-      <div class="chart-head">
-        <h2>Live option chain</h2>
-        <select id="chain-expiry" style="width:auto"></select>
-        <div class="spacer"></div>
+    <section class="block" id="chain-section" hidden>
+      <div class="section-head">
+        <div style="flex:1">
+          <h2 class="section">Live option chain</h2>
+        </div>
+        <select id="chain-expiry"></select>
         <div class="legend"><span id="chain-summary"></span></div>
       </div>
-      <div id="chain-body"></div>
-      <div class="footnote">
+      <div class="section-rule"></div>
+      <div class="table-scroll" id="chain-body"></div>
+      <div class="caption">
         Implied volatility on every row is computed by <strong>inverting this pricer</strong>
-        against that contract's traded price. It is not read from the feed's own implied-vol
-        field, which is shown beside it for comparison and is visibly broken: measured against
-        live AAPL it reports between 0.03% and 0.10% across every expiry, which is not a
-        volatility. Click a row to load that contract.
+        against that contract&#8217;s traded price. The feed&#8217;s own implied-vol field sits
+        beside it for comparison and is never used: the two routinely disagree, because that
+        field is computed on the provider&#8217;s own rate, dividend and price assumptions rather
+        than the ones on the left, and it has been observed returning values near zero outright.
+        Ours is reproducible from the inputs shown. Click a row to load that contract.
+        <strong>Read the volume column before you read the vol:</strong> these are last traded
+        prices, so a strike that traded five contracts hours ago is stale and its implied vol is
+        noise. The smooth part near the money is the signal, and what you should see there is
+        implied vol falling as the strike rises. That is the volatility skew, and it is not in
+        Black&#8211;Scholes, which assumes one volatility for every strike.
       </div>
-      <div class="footnote" style="margin-top:8px">
-        <strong>Read the volume column before you read the vol.</strong> These are LAST TRADED
-        prices, not live quotes, so a strike that traded five contracts hours ago carries a stale
-        price and its implied vol is noise. The smooth part of the curve near the money is the
-        real signal. What you should see there is implied vol falling as the strike rises, which
-        is the volatility skew: the market charges more for downside protection than for upside,
-        and it has done so on index and equity options continuously since October 1987. That
-        asymmetry is not in Black-Scholes, which assumes one volatility for every strike. It is
-        the market pricing the model's own wrongness, and it is next week's topic.
-      </div>
-    </div>
+    </section>
 
-    <div class="panel">
-      <h2>The Greeks</h2>
+    <section class="block">
+      <h2 class="section">The Greeks</h2>
+      <div class="section-rule"></div>
+      <div class="table-scroll">
       <table>
         <thead>
           <tr>
-            <th style="width:160px">Greek</th>
-            <th style="width:130px" class="num">Value</th>
-            <th style="width:240px">Is</th>
-            <th>What it means</th>
+            <th style="width:210px">Greek</th>
+            <th class="num" style="width:150px">Value</th>
+            <th>What it measures</th>
           </tr>
         </thead>
         <tbody id="greeks-body"></tbody>
       </table>
-    </div>
+      </div>
+    </section>
 
-    <div class="panel">
-      <div class="chart-head">
-        <h2>Curves against spot</h2>
-        <select id="curve-pick" style="width:auto">
+    <section class="block">
+      <div class="section-head">
+        <div style="flex:1">
+          <h2 class="section">Sensitivity to spot</h2>
+        </div>
+        <select id="curve-pick">
           <option value="price">Price</option>
           <option value="delta">Delta</option>
           <option value="gamma" selected>Gamma</option>
@@ -169,48 +166,17 @@
           <option value="volga">Volga</option>
           <option value="charm">Charm</option>
         </select>
-        <div class="spacer"></div>
         <div class="legend" id="curve-legend"></div>
       </div>
-      <svg class="plot" id="curve-plot" viewBox="0 0 900 340" preserveAspectRatio="xMidYMid meet"></svg>
-      <div class="footnote">
-        One line per time to expiry, everything else held at the values on the left. Gamma spiking at
-        the money as expiry approaches is the one worth looking at: it is the smoothed version of the
-        kink in the payoff, and it is what you are buying when you are long an option.
+      <div class="section-rule"></div>
+      <svg class="plot" id="curve-plot" viewBox="0 0 900 330" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="caption">
+        One line per time to expiry, everything else held at the values on the left. Gamma
+        spiking at the money as expiry approaches is the one worth looking at: it is the
+        smoothed version of the kink in the payoff, and it is what you are buying when you are
+        long an option.
       </div>
-    </div>
-
-    <div class="panel">
-      <div class="chart-head">
-        <h2>Lattice convergence</h2>
-        <div class="spacer"></div>
-        <div class="legend">
-          <span><i style="background:#58a6ff"></i>tree price</span>
-          <span><i style="background:#d29922"></i>closed form</span>
-        </div>
-      </div>
-      <svg class="plot" id="conv-plot" viewBox="0 0 900 300" preserveAspectRatio="xMidYMid meet"></svg>
-      <div class="footnote">
-        This should be a damped <strong>zigzag</strong>, not a smooth curve. The error is roughly
-        O(1/N), but its sign flips depending on where the strike falls relative to the terminal
-        nodes, and that alternates as N changes. A perfectly smooth line here would mean something
-        is wrong.
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="chart-head">
-        <h2>The tree itself</h2>
-        <select id="lat-steps" style="width:auto">
-          <option>3</option><option>4</option><option selected>5</option>
-          <option>6</option><option>7</option><option>8</option>
-        </select>
-        <div class="spacer"></div>
-        <div class="legend"><span><i style="background:#d29922"></i>exercise early here</span></div>
-      </div>
-      <svg class="lattice" id="lat-plot" viewBox="0 0 900 420" preserveAspectRatio="xMidYMid meet"></svg>
-      <div class="footnote" id="lat-note"></div>
-    </div>
+    </section>
   </div>
 
 </div>
@@ -221,8 +187,8 @@
 <div class="layout">
 
   <aside>
-    <div class="panel toc">
-      <h2>Contents</h2>
+    <div class="toc">
+      <h2 class="section" style="margin-bottom:12px">Contents</h2>
       <a href="#w-verify">0. Does it work</a>
       <a href="#w-kink">1. The kink, and why vol is the product</a>
       <a href="#w-gbm">2. The stock: geometric Brownian motion</a>
@@ -250,7 +216,7 @@
         Nothing here is a stored result. The targets are the reference values published with the
         assignment.
       </p>
-      <div class="panel" id="verify-panel"><span class="footnote">running...</span></div>
+      <div id="verify-panel"><span class="footnote">running&#8230;</span></div>
       <p class="footnote">
         The last row is a positive control and it is the one worth explaining. The row above it
         asserts that an American call on a non-dividend stock has exactly zero early-exercise
@@ -560,6 +526,15 @@ V = e^(-r·dt)·[ q·V_u + (1 - q)·V_d ],    q = (e^((r-q_div)·dt) - d) / (u -
         that does not.
       </p>
       <div class="code-block" data-symbol="binomial/build_lattice"></div>
+
+      <svg class="plot" id="conv-plot" viewBox="0 0 900 300" preserveAspectRatio="xMidYMid meet"></svg>
+      <p class="footnote">
+        Tree price against step count, for the contract currently loaded on the Model tab. It
+        should be a damped <strong>zigzag</strong>, not a smooth curve: the error is roughly
+        O(1/N), but its sign flips depending on where the strike falls relative to the terminal
+        nodes, and that alternates as N changes. A perfectly smooth line here would mean
+        something is wrong.
+      </p>
     </section>
 
     <section id="w-backward">
@@ -605,6 +580,16 @@ V = e^(-r·dt)·[ q·V_u + (1 - q)·V_d ],    q = (e^((r-q_div)·dt) - d) / (u -
         benefit disappears and the American put collapses onto the European one.
       </p>
       <div class="code-block" data-symbol="binomial/early_exercise_premium"></div>
+
+      <div class="section-head" style="margin-bottom:10px">
+        <div style="flex:1"></div>
+        <select id="lat-steps">
+          <option>3</option><option>4</option><option selected>5</option>
+          <option>6</option><option>7</option><option>8</option>
+        </select>
+      </div>
+      <svg class="lattice" id="lat-plot" viewBox="0 0 900 400" preserveAspectRatio="xMidYMid meet"></svg>
+      <p class="footnote" id="lat-note"></p>
       <p class="footnote">
         Note the choice to difference on a single lattice rather than against the closed form. The
         discretisation error is common to both legs and cancels, so what is left is the
