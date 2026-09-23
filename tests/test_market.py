@@ -9,6 +9,7 @@ test run can ever reach Yahoo.
 
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
@@ -447,3 +448,80 @@ def test_time_to_expiry_is_computed_from_today_not_assumed() -> None:
     )
     assert out["days_to_expiry"] == 365
     assert out["T"] == pytest.approx(1.0)
+
+
+# ------------------------------------------- non-finite values from the feed
+
+
+def test_a_nan_volume_never_reaches_the_response() -> None:
+    """Feeds send NaN in numeric columns, and it breaks the browser, not Python.
+
+    An illiquid strike comes back with volume NaN rather than 0 or null. The
+    obvious idiom `float(row.get("volume") or 0.0)` passes it straight through,
+    because NaN is TRUTHY, so `NaN or 0.0` is NaN.
+
+    Nothing then fails on the Python side: json.dumps emits a bare NaN token as
+    a non-standard extension and json.loads reads it back. The browser's
+    JSON.parse is strict and rejects it, so the entire chain response fails to
+    parse and the page shows a raw parser error. One bad strike takes down the
+    whole view.
+    """
+    rows = chain_rows()
+    rows[2]["volume"] = float("nan")
+    rows[3]["openInterest"] = float("nan")
+
+    assert math.isnan(rows[2]["volume"]), "the fixture must actually contain a NaN"
+
+    built = build_chain(rows, spot=100.0, T=0.5, r=0.05, q=0.0, kind="call")
+    for row in built:
+        assert math.isfinite(row.volume), f"NaN volume survived at {row.strike}"
+        assert math.isfinite(row.open_interest)
+
+
+def test_the_serialised_chain_is_strict_json() -> None:
+    """The real assertion: what ships must parse under STRICT json.
+
+    Python's own loads accepts bare NaN, so round-tripping through this module
+    would pass while the browser still failed. parse_constant is what makes
+    this test speak for the browser rather than for Python.
+    """
+    rows = chain_rows()
+    rows[1]["volume"] = float("nan")
+    rows[2]["impliedVolatility"] = float("nan")
+    rows[4]["openInterest"] = float("inf")
+
+    built = build_chain(rows, spot=100.0, T=0.5, r=0.05, q=0.0, kind="call")
+    payload = json.dumps([r.to_dict() for r in built])
+
+    assert "NaN" not in payload
+    assert "Infinity" not in payload
+
+    def reject(token):
+        raise AssertionError(f"non-standard JSON token {token!r} would break JSON.parse")
+
+    json.loads(payload, parse_constant=reject)
+
+
+def test_a_missing_feed_volatility_is_null_not_a_fabricated_zero() -> None:
+    """Absence and zero are different statements, and only one is true.
+
+    This value is displayed beside our own implied vol for comparison. A
+    substituted 0.0 would read as "the feed says zero volatility" rather than
+    "the feed gave no value".
+    """
+    rows = chain_rows()
+    rows[0]["impliedVolatility"] = float("nan")
+    rows[1]["impliedVolatility"] = None
+
+    built = build_chain(rows, spot=100.0, T=0.5, r=0.05, q=0.0, kind="call")
+    assert built[0].yahoo_implied_vol is None
+    assert built[1].yahoo_implied_vol is None
+    assert built[2].yahoo_implied_vol == pytest.approx(0.00001)
+
+
+def test_a_garbage_numeric_field_does_not_raise() -> None:
+    """A string where a number belongs should degrade, not take the page down."""
+    rows = chain_rows()
+    rows[0]["volume"] = "n/a"
+    built = build_chain(rows, spot=100.0, T=0.5, r=0.05, q=0.0, kind="call")
+    assert built[0].volume == 0.0
