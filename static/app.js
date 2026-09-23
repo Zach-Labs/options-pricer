@@ -179,7 +179,9 @@ function renderCards(d) {
 
 function renderLiveChecks(d) {
   const rows = [];
-  const parityOK = Math.abs(d.parity_residual) < 1e-10;
+  // Relative, not absolute: floating-point error scales with price, so a fixed
+  // threshold produces a false failure on a high-priced underlying.
+  const parityOK = Math.abs(d.parity_relative_residual) < 1e-12;
   rows.push({
     ok: parityOK,
     label: "Put-call parity",
@@ -353,6 +355,75 @@ async function refreshLattice() {
       : `European exercise, so there is no early-exercise decision to make at any node. Switch to American on the left to see the boundary appear.`);
 }
 
+/* ------------------------------------------------------------ live quotes */
+
+/* The only networked feature. It fills the form and then gets out of the way:
+ * every field stays editable, and a failure leaves whatever was already there.
+ * The pricer never depended on this and still does not. */
+
+/* Round to the kind of increment exchanges actually list strikes on, so the
+ * default contract looks like a real one rather than an arbitrary decimal. */
+function nearestStrike(spot) {
+  const step = spot < 25 ? 0.5 : spot < 100 ? 1 : spot < 250 ? 2.5 : 5;
+  return Math.round(spot / step) * step;
+}
+
+async function fetchQuote() {
+  const sym = $("ticker").value.trim().toUpperCase();
+  const status = $("quote-status");
+  const btn = $("btn-fetch");
+  if (!sym) return;
+
+  btn.disabled = true;
+  status.className = "hint";
+  status.textContent = `fetching ${sym}...`;
+  document.querySelector(".quote-detail")?.remove();
+
+  try {
+    const q = await get(`/api/quote/${encodeURIComponent(sym)}`);
+
+    $("S").value = q.spot.toFixed(2);
+    $("q").value = q.dividend_yield.toFixed(4);
+    // Move the strike to the money as well. Leaving a stale strike behind means
+    // fetching a $230 stock against a $100 strike, which lands you on a deep
+    // in-the-money option whose greeks are all pinned (delta at 1, gamma at 0)
+    // and shows none of the behaviour worth looking at. Overwrite it, and say
+    // so in the panel rather than changing a field silently.
+    $("K").value = nearestStrike(q.spot).toFixed(2);
+    // Prefer the 1-year window: it is the more stable estimate, and a 30-day
+    // number is jumpy enough that pre-filling with it would make the price
+    // look unstable for reasons that have nothing to do with the model.
+    const rv = q.realized_vol_1y ?? q.realized_vol_30d;
+    if (rv !== null && rv !== undefined) $("sigma").value = rv.toFixed(4);
+
+    status.className = "hint ok";
+    status.textContent = `${q.ticker} ${q.spot.toFixed(2)} ${q.currency}`;
+
+    const pct = (x) => (x === null || x === undefined ? "n/a" : (x * 100).toFixed(2) + "%");
+    const detail = document.createElement("div");
+    detail.className = "quote-detail";
+    detail.innerHTML =
+      `spot          ${q.spot.toFixed(2)} ${q.currency}<br>` +
+      `as of         ${String(q.as_of).slice(0, 10)}<br>` +
+      `realized vol  ${pct(q.realized_vol_1y)} (1y) · ${pct(q.realized_vol_30d)} (30d)<br>` +
+      `div yield     ${pct(q.dividend_yield)} (${q.trailing_dividends.toFixed(2)} paid / spot)<br>` +
+      `source        ${q.source}<br>` +
+      `strike        set to ${Number($("K").value).toFixed(2)}, the nearest listed-style strike` +
+      `<span class="warn-note">Sigma was filled with <b>realized</b> volatility, which is what the ` +
+      `stock actually did. Black-Scholes wants <b>implied</b> volatility, backed out of a traded ` +
+      `option price. They are different numbers and substituting one for the other is a modelling ` +
+      `assumption, not a data lookup. Overwrite sigma with a real implied vol when you have one.</span>`;
+    $("quote-status").after(detail);
+
+    scheduleRefresh();
+  } catch (e) {
+    status.className = "hint bad";
+    status.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* -------------------------------------------------- render: the walkthrough */
 
 /* Single-pass tokenizer.
@@ -507,12 +578,20 @@ function init() {
     refreshLattice();
   });
 
+  $("btn-fetch").addEventListener("click", fetchQuote);
+  $("ticker").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") fetchQuote();
+  });
+
   $("btn-bench").addEventListener("click", () => {
     $("S").value = 100; $("K").value = 100; $("T").value = 1;
     $("r").value = 0.05; $("sigma").value = 0.20; $("q").value = 0;
     $("steps").value = 500;
     state.tmode = "years";
     $("T").hidden = false; $("expiry").hidden = true;
+    document.querySelector(".quote-detail")?.remove();
+    $("quote-status").className = "hint";
+    $("quote-status").textContent = "Pulls spot, realized volatility and dividend yield.";
     [...$("seg-tmode").querySelectorAll("button")].forEach((b) =>
       b.setAttribute("aria-pressed", String(b.dataset.val === "years")));
     scheduleRefresh();

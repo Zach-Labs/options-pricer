@@ -350,3 +350,46 @@ svg.lattice .val.ex { fill: var(--warn); }
 }
 
 .footnote { color: var(--ink-faint); font-size: 12px; margin-top: 8px; }
+
+/* ------------------------------------------------------------ ticker fetch */
+
+.ticker-row { display: flex; gap: 6px; }
+.ticker-row input { flex: 1; text-transform: uppercase; }
+.ticker-row button {
+  flex: none;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 12px;
+  padding: 0 12px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.ticker-row button:hover { border-color: var(--accent); color: var(--accent); }
+.ticker-row button[disabled] { opacity: 0.5; cursor: default; }
+
+#quote-status.ok { color: var(--good); }
+#quote-status.bad { color: var(--bad); }
+
+.quote-detail {
+  margin-top: 8px;
+  padding: 9px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  line-height: 1.7;
+}
+.quote-detail .warn-note {
+  color: var(--warn);
+  font-family: var(--sans);
+  font-size: 11px;
+  display: block;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line-soft);
+  line-height: 1.45;
+}

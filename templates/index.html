@@ -29,8 +29,12 @@
       <h2>Contract</h2>
 
       <div class="field">
-        <label for="ticker">Ticker <span class="hint">label only, no live data</span></label>
-        <input type="text" id="ticker" value="SPY" autocomplete="off">
+        <label for="ticker">Ticker</label>
+        <div class="ticker-row">
+          <input type="text" id="ticker" value="AAPL" autocomplete="off" spellcheck="false">
+          <button id="btn-fetch" type="button">Fetch</button>
+        </div>
+        <div class="hint" id="quote-status">Pulls spot, realized volatility and dividend yield.</div>
       </div>
 
       <div class="field">

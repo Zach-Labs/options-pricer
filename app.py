@@ -24,7 +24,7 @@ import traceback
 
 from flask import Flask, jsonify, render_template, request
 
-from pricing import binomial, bsm
+from pricing import binomial, bsm, market
 from pricing.glossary import GREEKS
 
 app = Flask(__name__)
@@ -122,6 +122,7 @@ def api_price():
         "greeks_raw": raw,
         "greeks_display": bsm.greeks_display(raw),
         "parity_residual": bsm.parity_residual(p),
+        "parity_relative_residual": bsm.parity_relative_residual(p),
         "call_price": bsm.price(p, "call"),
         "put_price": bsm.price(p, "put"),
         "intrinsic": max(p.S - p.K, 0.0) if kind == "call" else max(p.K - p.S, 0.0),
@@ -246,6 +247,21 @@ def api_source(name: str):
         "code": path.read_text(),
         "lines": len(path.read_text().splitlines()),
     })
+
+
+@app.get("/api/quote/<ticker>")
+def api_quote(ticker: str):
+    """Live spot, realized volatility and dividend yield for a ticker.
+
+    The ONLY endpoint that touches the network, and the only one allowed to
+    fail without taking anything else with it. A failure here returns 503 with
+    the reason, and the UI keeps whatever is already in the form, because the
+    pricer never needed this to work in the first place.
+    """
+    try:
+        return jsonify(market.fetch_quote(ticker).to_dict())
+    except market.MarketDataUnavailable as exc:
+        return jsonify({"error": str(exc)}), 503
 
 
 @app.get("/api/symbol/<module>/<symbol>")
