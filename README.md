@@ -15,6 +15,10 @@ Built for Traders@SMU Quantitative Strategies, week 1.
   happens.
 - **A localhost app** with two tabs: the model itself, and a walkthrough that
   puts the derivation beside the real source file it produced.
+- **Live quotes.** Type a ticker and it fills spot, realized volatility and
+  dividend yield from Yahoo. This is the only networked part of the project and
+  it is quarantined: if it fails, the pricer does not, and you type the spot in
+  by hand as before.
 
 ## Running it
 
@@ -54,6 +58,14 @@ edge disappears.
 Every analytic greek is checked against a central finite difference of the
 price function, because a greek formula with one wrong sign still returns
 plausible numbers and only a numerical derivative catches it.
+
+## A note on volatility
+
+The ticker fetch fills sigma with **realized** volatility, which is what the
+stock actually did. Black-Scholes wants **implied** volatility, backed out of a
+traded option price. They are different numbers, and substituting one for the
+other is a modelling assumption rather than a data lookup. The app says so on
+screen every time it fills the field.
 
 ## A note on the tests
 
