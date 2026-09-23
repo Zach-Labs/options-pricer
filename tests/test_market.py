@@ -347,3 +347,103 @@ def test_the_leaf_fetcher_refuses_too_not_just_the_entry_point() -> None:
 
     with pytest.raises(MarketDataUnavailable, match="refusing to fetch live market data"):
         _default_fetcher("AAPL")
+
+
+# ------------------------------------------------------- the option chain
+
+
+from pricing.market import build_chain, fetch_chain  # noqa: E402
+
+
+def chain_rows(spot=100.0, sigma=0.30, T=0.5, r=0.05, q=0.0, kind="call", strikes=None):
+    """Rows priced at a KNOWN sigma, so the inversion has a right answer."""
+    from pricing.bsm import Inputs, price
+
+    strikes = strikes or [80, 90, 100, 110, 120]
+    return [
+        {
+            "strike": float(k),
+            "lastPrice": price(Inputs(S=spot, K=float(k), T=T, r=r, sigma=sigma, q=q), kind),
+            "volume": 100.0,
+            "openInterest": 50.0,
+            "lastTradeDate": "2026-09-22 20:00:00",
+            "impliedVolatility": 0.00001,  # the feed's broken value
+            "inTheMoney": spot > k,
+        }
+        for k in strikes
+    ]
+
+
+def test_every_row_recovers_the_volatility_it_was_priced_with() -> None:
+    """The chain inverts each contract's own price, not a feed field."""
+    rows = build_chain(chain_rows(), spot=100.0, T=0.5, r=0.05, q=0.0, kind="call")
+    assert len(rows) == 5
+    for row in rows:
+        assert row.implied_vol == pytest.approx(0.30, abs=1e-6), row.strike
+        assert row.implied_vol_error is None
+
+
+def test_the_feeds_own_broken_iv_is_carried_but_never_used() -> None:
+    """Both numbers are surfaced so they can be compared, not conflated.
+
+    The feed's field really is broken: measured against live AAPL it returned
+    0.025% to 0.099% across every expiry while the traded prices imply 23% to
+    27%. Carrying it labelled is useful; trusting it would not be.
+    """
+    rows = build_chain(chain_rows(), spot=100.0, T=0.5, r=0.05, q=0.0, kind="call")
+    for row in rows:
+        assert row.yahoo_implied_vol == pytest.approx(0.00001)
+        assert row.implied_vol == pytest.approx(0.30, abs=1e-6)
+        assert row.implied_vol != pytest.approx(row.yahoo_implied_vol)
+
+
+def test_an_uninvertible_row_keeps_its_reason_instead_of_vanishing() -> None:
+    """A dropped row makes the chain look cleaner than it is.
+
+    A price below intrinsic is a stale or wrong quote, and that is worth seeing
+    rather than quietly removing.
+    """
+    rows = chain_rows()
+    rows[0]["lastPrice"] = 0.01  # far below intrinsic for the 80 strike
+    built = build_chain(rows, spot=100.0, T=0.5, r=0.05, q=0.0, kind="call")
+
+    assert len(built) == 5, "the row must still be present"
+    assert built[0].implied_vol is None
+    assert built[0].implied_vol_error is not None
+    assert "no-arbitrage floor" in built[0].implied_vol_error
+    # and the rest are unaffected
+    assert all(r.implied_vol == pytest.approx(0.30, abs=1e-6) for r in built[1:])
+
+
+def test_puts_invert_to_the_same_volatility_as_calls() -> None:
+    c = build_chain(chain_rows(kind="call"), 100.0, 0.5, 0.05, 0.0, "call")
+    p = build_chain(chain_rows(kind="put"), 100.0, 0.5, 0.05, 0.0, "put")
+    for a, b in zip(c, p):
+        assert a.implied_vol == pytest.approx(b.implied_vol, abs=1e-6)
+
+
+def test_an_expiry_in_the_past_is_refused() -> None:
+    with pytest.raises(MarketDataUnavailable, match="not in the future"):
+        fetch_chain("AAPL", "2020-01-17", 100.0, 0.05, 0.0, "call",
+                    as_of=datetime.date(2026, 9, 23), fetcher=lambda *a: [])
+
+
+def test_todays_expiry_is_refused_because_nothing_is_left_to_price() -> None:
+    with pytest.raises(MarketDataUnavailable, match="not in the future"):
+        fetch_chain("AAPL", "2026-09-23", 100.0, 0.05, 0.0, "call",
+                    as_of=datetime.date(2026, 9, 23), fetcher=lambda *a: [])
+
+
+def test_a_malformed_expiry_is_refused() -> None:
+    with pytest.raises(MarketDataUnavailable, match="not a date"):
+        fetch_chain("AAPL", "next friday", 100.0, 0.05, 0.0, "call",
+                    as_of=datetime.date(2026, 9, 23), fetcher=lambda *a: [])
+
+
+def test_time_to_expiry_is_computed_from_today_not_assumed() -> None:
+    out = fetch_chain(
+        "AAPL", "2027-09-23", 100.0, 0.05, 0.0, "call",
+        as_of=datetime.date(2026, 9, 23), fetcher=lambda *a: chain_rows(T=1.0),
+    )
+    assert out["days_to_expiry"] == 365
+    assert out["T"] == pytest.approx(1.0)

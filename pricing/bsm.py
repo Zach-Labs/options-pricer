@@ -306,3 +306,204 @@ def parity_relative_residual(p: Inputs) -> float:
 def _check_kind(kind: str) -> None:
     if kind not in ("call", "put"):
         raise ValueError(f"kind must be 'call' or 'put', got {kind!r}")
+
+
+class NoImpliedVol(ValueError):
+    """Raised when no volatility can reproduce the given price.
+
+    Not a solver failure. It means the price itself is outside what the model
+    can produce for ANY sigma, which is information: either the quote is stale
+    or wrong, or the inputs (rate, dividend, time to expiry) do not match the
+    contract that traded.
+    """
+
+
+def implied_vol_with_uncertainty(
+    target_price: float,
+    S: float,
+    K: float,
+    T: float,
+    r: float,
+    kind: str,
+    q: float = 0.0,
+    tol: float = 1e-10,
+    max_iter: int = 200,
+) -> float:
+    """Solve for the sigma that makes the BSM price equal an observed price.
+
+    This is Black-Scholes used BACKWARDS, and it is how the formula is actually
+    used on a desk. Nobody feeds a volatility in to get a price out; they read
+    the traded price and ask what volatility the formula would need to produce
+    it. That number is the implied volatility, and it, not the dollar price, is
+    what gets quoted, compared across strikes and expiries, and traded.
+
+    Why the inversion is well posed: vega is strictly positive for a European
+    option, so the price is a strictly INCREASING function of sigma. It runs
+    from the no-arbitrage floor (discounted intrinsic, at sigma = 0) up towards
+    the underlying's discounted value as sigma grows without bound. A strictly
+    monotone function has a unique inverse, so there is exactly one answer or
+    none, never several.
+
+    Method: bisection, deliberately. Newton converges faster and is the obvious
+    choice, but its derivative is vega, and vega collapses towards zero for
+    deep in- or out-of-the-money options, which is exactly where a real quote
+    is most likely to be odd. Dividing by a near-zero derivative there throws
+    the iterate somewhere useless. Bisection cannot diverge and cannot
+    overshoot. Robustness beats speed for something that runs once per click.
+
+    `tol` is a tolerance on SIGMA, not on price. That distinction is not
+    pedantic: option prices here span from 1e-5 to 1e+2 dollars, and a fixed
+    price tolerance means completely different precision at the two ends. A
+    1e-8 price tolerance against a price of 1.8e-5 stops the search while the
+    answer is still wrong in the fifth decimal. Bisecting until the sigma
+    bracket is narrow is magnitude-independent and controls the thing the
+    caller actually receives.
+
+    Raises NoImpliedVol when the price is outside the achievable range, and
+    ALSO when the price carries no information about sigma. That second case is
+    real and easy to miss: for a deep out-of-the-money, short-dated, low-vol
+    option, the entire volatility value can be smaller than one unit in the
+    last place of the price. Every sigma across a wide band then reproduces the
+    quote exactly, so there is no implied volatility to report, and returning
+    whichever value the search happened to land on would be fabricating
+    precision that does not exist.
+    """
+    _check_kind(kind)
+    if target_price is None or not math.isfinite(target_price):
+        raise NoImpliedVol("no price to invert")
+    if T <= 0:
+        raise NoImpliedVol("cannot imply a volatility at or after expiry")
+
+    lo, hi = 1e-9, MAX_SEARCH_VOL
+
+    def model(sigma: float) -> float:
+        return price(Inputs(S=S, K=K, T=T, r=r, sigma=sigma, q=q), kind)
+
+    floor, ceiling = model(lo), model(hi)
+
+    # The floor is the no-arbitrage bound: discounted intrinsic against the
+    # forward. A price below it is not a low volatility, it is an arbitrage or
+    # a bad quote, and reporting some tiny sigma instead of saying so would be
+    # inventing a number.
+    if target_price < floor - 1e-10:
+        raise NoImpliedVol(
+            f"price {target_price:.4f} is below the no-arbitrage floor {floor:.4f}; "
+            f"the quote is stale or the inputs do not match the contract"
+        )
+    if target_price > ceiling:
+        # Careful with the wording here. This is the top of the SEARCH RANGE,
+        # not the model's structural ceiling. As sigma grows without bound a
+        # call tends to S*exp(-qT), so the model can produce far more than this.
+        # Claiming otherwise would send someone hunting for a bug in the pricer
+        # when the honest answer is that the contract's volatility is outside
+        # the band this solver looks in.
+        raise NoImpliedVol(
+            f"price {target_price:.4f} is above the highest price this solver searches, "
+            f"{ceiling:.4f}, which is the value at {MAX_SEARCH_VOL * 100:.0f}% volatility. "
+            f"The model itself can go higher (towards S*exp(-qT) as sigma grows), so this "
+            f"is the search range being exceeded, not the model"
+        )
+
+    for _ in range(max_iter):
+        if hi - lo < tol:
+            break
+        mid = 0.5 * (lo + hi)
+        if model(mid) < target_price:
+            lo = mid
+        else:
+            hi = mid
+
+    sigma = 0.5 * (lo + hi)
+    uncertainty = vol_uncertainty(S, K, T, r, kind, sigma, q=q)
+
+    if uncertainty > MAX_VOL_UNCERTAINTY:
+        raise NoImpliedVol(
+            f"price {target_price:.6g} does not pin down a volatility for this contract. "
+            f"Vega here is {price_noise_floor(S, K) / uncertainty:.3g}, so the "
+            f"{price_noise_floor(S, K):.3g} of price that double precision can resolve "
+            f"spans {uncertainty * 100:.2f} volatility points. Any vol across that band "
+            f"reproduces this quote, so there is no implied vol to report."
+        )
+
+    return sigma, uncertainty
+
+
+# The widest volatility the solver searches. Listed options essentially never
+# imply more than this; 0DTE and biotech-catalyst weeklies are the exceptions
+# and they can genuinely print several hundred percent, which is why the
+# ceiling sits well above the textbook range rather than at it.
+MAX_SEARCH_VOL = 10.0
+
+# How much volatility uncertainty is still worth reporting. Half a vol point:
+# beyond that the number would be quoted to a precision it does not have, and a
+# refusal carrying the reason is more useful than a confident wrong answer.
+MAX_VOL_UNCERTAINTY = 0.005
+
+# Unit roundoff for IEEE double precision.
+_EPS = 2.220446049250313e-16
+
+
+def price_noise_floor(S: float, K: float) -> float:
+    """Smallest price difference that is meaningful at these input magnitudes.
+
+    Why it scales with max(S, K) rather than with the option's own price: the
+    formula is a DIFFERENCE of two terms, S*exp(-qT)*Phi(d1) and
+    K*exp(-rT)*Phi(d2), each of order S or K. Subtracting two large nearly
+    equal numbers leaves an absolute error floor set by the size of the
+    operands, not by the size of the result. A deep out-of-the-money option can
+    be worth 1e-5 while its price still carries absolute error of order
+    eps*max(S, K), which is enormous relative to the price itself.
+
+    The factor of 8 is a small allowance for the handful of rounded operations
+    between those terms and the result (two exponentials, two CDF evaluations,
+    a multiply and a subtract). It is a bound on the same order as the
+    cancellation argument above, not a tuned constant, and test_noise_floor.py
+    pins it inside a band so a future edit cannot quietly inflate it by orders
+    of magnitude and start refusing well-identified contracts.
+    """
+    return 8.0 * _EPS * max(S, K)
+
+
+def vol_uncertainty(
+    S: float, K: float, T: float, r: float, kind: str, sigma: float, q: float = 0.0
+) -> float:
+    """Volatility points of uncertainty implied by price quantisation.
+
+    Straight error propagation through the inverse. Vega is dPrice/dSigma, so
+    inverting it gives dSigma/dPrice, and multiplying by the smallest
+    resolvable price difference gives the smallest volatility difference the
+    price can distinguish:
+
+        dSigma = dPrice / vega
+
+    This is the honest precision of an implied vol, and it varies over about
+    ten orders of magnitude across a real option chain. At the money with a
+    year to run, vega is around 14 and the uncertainty is 1e-14, which is
+    nothing. Far out of the money at low vol, vega falls to 3e-10 and the same
+    price noise spans 7e-4 of volatility, which is no longer nothing.
+
+    Returns infinity when vega is zero, which is the genuinely unidentified
+    case rather than a merely imprecise one.
+    """
+    v = greeks(Inputs(S=S, K=K, T=T, r=r, sigma=sigma, q=q), kind)["vega"]
+    if v <= 0.0:
+        return math.inf
+    return price_noise_floor(S, K) / v
+
+
+def implied_vol(
+    target_price: float,
+    S: float,
+    K: float,
+    T: float,
+    r: float,
+    kind: str,
+    q: float = 0.0,
+    tol: float = 1e-10,
+    max_iter: int = 200,
+) -> float:
+    """The implied volatility alone. See implied_vol_with_uncertainty."""
+    sigma, _ = implied_vol_with_uncertainty(
+        target_price, S, K, T, r, kind, q=q, tol=tol, max_iter=max_iter
+    )
+    return sigma

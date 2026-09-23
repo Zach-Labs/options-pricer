@@ -324,7 +324,12 @@ async function fetchQuote() {
     const q = await get(`/api/quote/${encodeURIComponent(sym)}`);
 
     $("S").value = q.spot.toFixed(2);
-    $("q").value = q.dividend_yield.toFixed(4);
+    // 8 decimals, not 4. These fields are WRITTEN by code and then READ BACK to
+    // price with, so truncating here silently changes the input. Rounding the
+    // dividend yield to 4dp shifted it by 2e-5, which moved the repriced value
+    // by 9e-4 and made the chain's "reprices the market exactly" line show a
+    // visible residual that had nothing to do with the solver.
+    $("q").value = q.dividend_yield.toFixed(8);
     // Move the strike to the money as well. Leaving a stale strike behind means
     // fetching a $230 stock against a $100 strike, which lands you on a deep
     // in-the-money option whose greeks are all pinned (delta at 1, gamma at 0)
@@ -335,7 +340,7 @@ async function fetchQuote() {
     // number is jumpy enough that pre-filling with it would make the price
     // look unstable for reasons that have nothing to do with the model.
     const rv = q.realized_vol_1y ?? q.realized_vol_30d;
-    if (rv !== null && rv !== undefined) $("sigma").value = rv.toFixed(4);
+    if (rv !== null && rv !== undefined) $("sigma").value = rv.toFixed(8);
 
     status.className = "hint ok";
     status.textContent = `${q.ticker} ${q.spot.toFixed(2)} ${q.currency}`;
@@ -357,12 +362,156 @@ async function fetchQuote() {
     $("quote-status").after(detail);
 
     scheduleRefresh();
+    loadExpiries(sym);
   } catch (e) {
     status.className = "hint bad";
     status.textContent = e.message;
   } finally {
     btn.disabled = false;
   }
+}
+
+/* ------------------------------------------------------- the option chain */
+
+let chainData = null;
+
+async function loadExpiries(ticker) {
+  try {
+    const d = await get(`/api/expiries/${encodeURIComponent(ticker)}`);
+    const sel = $("chain-expiry");
+    sel.innerHTML = d.expiries.map((e) => `<option value="${e}">${e}</option>`).join("");
+    // Default to roughly three months out rather than the front week. The
+    // nearest expiries are the ones whose quotes are thinnest and most likely
+    // to be stale, which makes a bad first impression of a working chain.
+    const target = d.expiries.find((e) => (new Date(e) - new Date()) / 86400000 > 80);
+    if (target) sel.value = target;
+    $("chain-panel").hidden = false;
+    await loadChain();
+  } catch (e) {
+    $("chain-panel").hidden = true;
+  }
+}
+
+async function loadChain() {
+  const ticker = $("ticker").value.trim().toUpperCase();
+  const expiry = $("chain-expiry").value;
+  if (!ticker || !expiry) return;
+
+  $("chain-body").innerHTML = `<div class="footnote">loading ${ticker} ${expiry}...</div>`;
+  try {
+    chainData = await get(
+      `/api/chain/${encodeURIComponent(ticker)}/${encodeURIComponent(expiry)}` +
+      `?kind=${state.kind}&r=${encodeURIComponent($("r").value)}`
+    );
+    renderChain();
+  } catch (e) {
+    chainData = null;
+    $("chain-body").innerHTML = `<div class="err">${e.message}</div>`;
+  }
+}
+
+function renderChain() {
+  const d = chainData;
+  if (!d) return;
+
+  // Show a window around the money. A full 97-row chain is mostly deep wings
+  // with stale quotes, and the interesting structure is near the spot.
+  const near = d.rows
+    .filter((r) => Math.abs(r.strike - d.spot) <= d.spot * 0.15)
+    .sort((a, b) => a.strike - b.strike);
+
+  const withIv = near.filter((r) => r.implied_vol !== null);
+  $("chain-summary").textContent =
+    `${d.days_to_expiry} days · ${near.length} strikes near the money · ` +
+    `${withIv.length} inverted`;
+
+  const rows = near.map((r) => {
+    const atm = Math.abs(r.strike - d.spot) < d.spot * 0.008;
+    // Flag a row whose implied vol is real but imprecise. Vega varies by ten
+    // orders of magnitude across one chain, so the same price noise is
+    // invisible at the money and material in the wings.
+    const shaky = r.implied_vol !== null && r.implied_vol_uncertainty > 1e-5;
+    const iv = r.implied_vol !== null
+      ? `<span class="ours">${(r.implied_vol * 100).toFixed(2)}%</span>` +
+        (shaky ? `<span class="bad-iv" title="only pinned to about ${(r.implied_vol_uncertainty * 100).toFixed(3)} vol points here, because vega is small at this strike"> ±${(r.implied_vol_uncertainty * 100).toFixed(2)}</span>` : "")
+      : `<span class="bad-iv" title="${(r.implied_vol_error || "").replace(/"/g, "&quot;")}">no vol</span>`;
+    const yiv = r.yahoo_implied_vol !== null
+      ? `<span class="dim">${(r.yahoo_implied_vol * 100).toFixed(3)}%</span>` : "-";
+    return `<tr data-strike="${r.strike}" class="${atm ? "atm" : ""}">
+      <td>${r.strike.toFixed(2)}</td>
+      <td>${r.last_price.toFixed(2)}</td>
+      <td>${iv}</td>
+      <td>${yiv}</td>
+      <td class="dim">${r.volume.toFixed(0)}</td>
+      <td class="dim">${r.last_trade.slice(0, 10)}</td>
+    </tr>`;
+  }).join("");
+
+  $("chain-body").innerHTML = `
+    <table class="chain">
+      <thead><tr>
+        <th>Strike</th><th>Last traded</th>
+        <th>Implied vol (ours)</th><th>Implied vol (feed)</th>
+        <th>Volume</th><th>Last trade</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div id="chain-compare"></div>`;
+
+  $("chain-body").querySelectorAll("tbody tr").forEach((tr) => {
+    tr.addEventListener("click", () => applyContract(parseFloat(tr.dataset.strike), tr));
+  });
+}
+
+async function applyContract(strike, tr) {
+  const d = chainData;
+  const row = d.rows.find((r) => r.strike === strike);
+  if (!row) return;
+
+  $("chain-body").querySelectorAll("tr").forEach((el) => el.classList.remove("picked"));
+  tr.classList.add("picked");
+
+  $("K").value = strike.toFixed(2);
+  $("T").value = d.T.toFixed(8);
+  state.tmode = "years";
+  $("T").hidden = false;
+  $("expiry").hidden = true;
+  [...$("seg-tmode").querySelectorAll("button")].forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.val === "years")));
+
+  if (row.implied_vol !== null) $("sigma").value = row.implied_vol.toFixed(8);
+
+  await refreshAll();
+
+  // The point of the whole feature, made explicit: fed the market's own
+  // implied volatility, the model reproduces the market's own price. That is
+  // not a coincidence, it is what implied vol MEANS, and seeing the two land
+  // on the same number is the clearest possible demonstration of it.
+  const priced = await post("/api/price", payload());
+  const cmp = $("chain-compare");
+  if (!cmp) return;
+
+  if (row.implied_vol === null) {
+    cmp.innerHTML = `<div class="chain-compare">
+      Loaded the ${strike.toFixed(2)} strike, but this contract has
+      <b>no implied volatility</b>: ${row.implied_vol_error}
+      Sigma was left at its previous value, so the price below is the model's, not the market's.
+    </div>`;
+    return;
+  }
+
+  const diff = priced.closed_form - row.last_price;
+  cmp.innerHTML = `<div class="chain-compare">
+    market last traded &nbsp;<b>${row.last_price.toFixed(4)}</b><br>
+    implied volatility &nbsp;&nbsp;<b>${(row.implied_vol * 100).toFixed(4)}%</b>
+      &nbsp;<span class="dim">(inverted from that price by this pricer)</span><br>
+    our model at that vol &nbsp;<b>${priced.closed_form.toFixed(4)}</b><br>
+    difference &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+      <b>${diff.toExponential(2)}</b>
+      &nbsp;<span class="dim">the model reprices the market to the precision of the inputs
+      shown, because that is what implied volatility means: the sigma that makes this formula
+      agree with that quote</span>
+  </div>`;
 }
 
 /* -------------------------------------------------- render: the walkthrough */
@@ -496,7 +645,10 @@ function init() {
   ["S", "K", "T", "r", "sigma", "q", "steps", "expiry"].forEach((id) =>
     $(id).addEventListener("input", scheduleRefresh));
 
-  wireSegment("seg-kind", "kind");
+  wireSegment("seg-kind", "kind", () => {
+    // Calls and puts are different chains, so the table has to be refetched.
+    if (chainData) loadChain();
+  });
   wireSegment("seg-style", "style");
   wireSegment("seg-tmode", "tmode", () => {
     const byDate = state.tmode === "date";
@@ -519,6 +671,7 @@ function init() {
   });
 
   $("btn-fetch").addEventListener("click", fetchQuote);
+  $("chain-expiry").addEventListener("change", loadChain);
   $("ticker").addEventListener("keydown", (e) => {
     if (e.key === "Enter") fetchQuote();
   });
@@ -530,6 +683,8 @@ function init() {
     state.tmode = "years";
     $("T").hidden = false; $("expiry").hidden = true;
     document.querySelector(".quote-detail")?.remove();
+    $("chain-panel").hidden = true;
+    chainData = null;
     $("quote-status").className = "hint";
     $("quote-status").textContent = "Pulls spot, realized volatility and dividend yield.";
     [...$("seg-tmode").querySelectorAll("button")].forEach((b) =>

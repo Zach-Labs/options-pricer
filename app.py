@@ -264,6 +264,36 @@ def api_quote(ticker: str):
         return jsonify({"error": str(exc)}), 503
 
 
+@app.get("/api/expiries/<ticker>")
+def api_expiries(ticker: str):
+    """Listed expiry dates for a ticker."""
+    try:
+        return jsonify({"ticker": ticker.upper(), "expiries": market.fetch_expiries(ticker)})
+    except market.MarketDataUnavailable as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.get("/api/chain/<ticker>/<expiry>")
+def api_chain(ticker: str, expiry: str):
+    """One expiry's option chain, with implied volatility we computed ourselves.
+
+    The implied vol on each row comes from inverting OUR pricer against that
+    contract's traded price, not from the feed's own field. Measured against
+    live AAPL, that field reads between 0.025% and 0.099% across every expiry,
+    which is not a volatility. It is returned alongside anyway so the two can
+    be compared on screen instead of one being silently trusted.
+    """
+    kind = request.args.get("kind", "call")
+    r = float(request.args.get("r", 0.05))
+    try:
+        quote = market.fetch_quote(ticker)
+        return jsonify(market.fetch_chain(
+            ticker, expiry, quote.spot, r, quote.dividend_yield, kind,
+        ))
+    except market.MarketDataUnavailable as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
 @app.get("/api/symbol/<module>/<symbol>")
 def api_symbol(module: str, symbol: str):
     """Serve ONE function's source, pulled live with inspect.getsource.

@@ -113,6 +113,33 @@
       <div id="tree-note" class="footnote"></div>
     </div>
 
+    <div class="panel" id="chain-panel" hidden>
+      <div class="chart-head">
+        <h2>Live option chain</h2>
+        <select id="chain-expiry" style="width:auto"></select>
+        <div class="spacer"></div>
+        <div class="legend"><span id="chain-summary"></span></div>
+      </div>
+      <div id="chain-body"></div>
+      <div class="footnote">
+        Implied volatility on every row is computed by <strong>inverting this pricer</strong>
+        against that contract's traded price. It is not read from the feed's own implied-vol
+        field, which is shown beside it for comparison and is visibly broken: measured against
+        live AAPL it reports between 0.03% and 0.10% across every expiry, which is not a
+        volatility. Click a row to load that contract.
+      </div>
+      <div class="footnote" style="margin-top:8px">
+        <strong>Read the volume column before you read the vol.</strong> These are LAST TRADED
+        prices, not live quotes, so a strike that traded five contracts hours ago carries a stale
+        price and its implied vol is noise. The smooth part of the curve near the money is the
+        real signal. What you should see there is implied vol falling as the strike rises, which
+        is the volatility skew: the market charges more for downside protection than for upside,
+        and it has done so on index and equity options continuously since October 1987. That
+        asymmetry is not in Black-Scholes, which assumes one volatility for every strike. It is
+        the market pricing the model's own wrongness, and it is next week's topic.
+      </div>
+    </div>
+
     <div class="panel">
       <h2>The Greeks</h2>
       <table>
