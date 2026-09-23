@@ -19,7 +19,7 @@ from pricing.binomial import (
     price_tree,
     tree_delta,
 )
-from pricing.bsm import Inputs, greeks, parity_residual, price
+from pricing.bsm import Inputs, greeks, parity_relative_residual, parity_residual, price
 
 # The reference case handed out with the assignment.
 BENCH = Inputs(S=100, K=100, T=1.0, r=0.05, sigma=0.20)
@@ -67,7 +67,7 @@ def test_put_call_parity_holds_to_machine_precision(p: Inputs) -> None:
     A pure no-arbitrage identity with no model in it. If this ever fails there
     is a sign error in price(), and parity is what tells you so.
     """
-    assert abs(parity_residual(p)) < 1e-12
+    assert abs(parity_relative_residual(p)) < 1e-12
 
 
 # ------------------------------------------------------- the Merton theorem
@@ -354,4 +354,56 @@ def test_parity_still_holds_in_the_degenerate_branch() -> None:
         Inputs(S=90, K=100, T=0.0, r=0.05, sigma=0.20),
         Inputs(S=100, K=100, T=1.0, r=0.05, sigma=0.0, q=0.02),
     ):
-        assert abs(parity_residual(p)) < 1e-12
+        assert abs(parity_relative_residual(p)) < 1e-12
+
+
+@pytest.mark.parametrize("S", [1.0, 10.0, 100.0, 1_000.0, 10_000.0, 100_000.0, 700_000.0])
+def test_parity_holds_across_six_orders_of_magnitude(S: float) -> None:
+    """The check must not get weaker just because the underlying is expensive.
+
+    An absolute tolerance on the raw residual silently tightens as prices grow,
+    because double-precision error scales with magnitude. At S = 700,000, which
+    is roughly where BRK-A trades and is therefore reachable by typing a real
+    ticker, the raw residual is about 3e-11 against what used to be a 1e-10
+    threshold in the UI: passing, with 3x of headroom, which is not a check so
+    much as a coin flip.
+    """
+    p = Inputs(S=S, K=S * 1.05, T=1.0, r=0.05, sigma=0.20, q=0.01)
+    assert abs(parity_relative_residual(p)) < 1e-12
+
+
+def test_the_relative_parity_check_still_catches_a_real_sign_error() -> None:
+    """Positive control: scaling must not make the check unfalsifiable.
+
+    A genuine sign error produces a residual of the same order as the price
+    itself, so the ratio lands near 1 and fails by orders of magnitude. Built
+    here by evaluating a deliberately WRONG parity relation (C + P instead of
+    C - P) and asserting the scaled residual is enormous, which proves the
+    scaled check can still fail.
+    """
+    p = Inputs(S=700_000, K=700_000, T=1.0, r=0.05, sigma=0.20)
+    wrong = price(p, "call") + price(p, "put") - (p.S - p.K * math.exp(-p.r * p.T))
+    assert abs(wrong / p.S) > 1e-3
+
+
+def test_the_parity_scaling_is_the_stated_one_not_an_arbitrary_constant() -> None:
+    """Pin the divisor itself, not just that the scaled value is small.
+
+    The positive control above computes its own ratio by hand, so it never
+    calls parity_relative_residual and a mutation replacing the scale with a
+    huge constant survived it: everything divided by 1e18 looks tiny and
+    passes. That makes the check unfalsifiable, which is worse than no check.
+
+    So assert the identity the function actually claims:
+        relative = residual / max(1, S, K)
+    computed independently here.
+    """
+    for p in (
+        Inputs(S=100, K=100, T=1.0, r=0.05, sigma=0.20),
+        Inputs(S=700_000, K=650_000, T=2.0, r=0.04, sigma=0.35, q=0.01),
+        Inputs(S=0.5, K=0.75, T=0.5, r=0.03, sigma=0.60),
+    ):
+        expected_scale = max(1.0, abs(p.S), abs(p.K))
+        assert parity_relative_residual(p) == pytest.approx(
+            parity_residual(p) / expected_scale, rel=1e-12, abs=1e-18
+        )

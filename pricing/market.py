@@ -1,0 +1,212 @@
+"""Live market data for the ticker field. The ONLY networked part of the project.
+
+Deliberately quarantined in its own module and behind its own endpoint, because
+everything else here is pure arithmetic that works offline and always will. If
+this file stops working, the pricer does not: the UI falls back to typing the
+spot in by hand, which is how it worked before.
+
+Three things it returns, and the honesty notes on each matter more than the code:
+
+1. SPOT. Yahoo's last price, via yfinance. It can be delayed, and it is a single
+   source, so the as-of timestamp is returned with it and shown in the UI rather
+   than presenting it as a live feed.
+
+2. REALIZED VOLATILITY. The standard deviation of daily log returns, annualised
+   by sqrt(252). Offered as a convenience for pre-filling sigma, and labelled
+   loudly as realized rather than implied, because THOSE ARE NOT THE SAME THING
+   and the difference is most of what the course is about. BSM's sigma is the
+   market's implied volatility, backed out of an option's traded price. What is
+   computed here is what the stock actually did. Using realized as a stand-in is
+   a modelling assumption, not a data lookup, and the UI says so.
+
+3. DIVIDEND YIELD. Derived from the dividends actually paid over the trailing
+   year, divided by spot. NOT taken from yfinance's `dividendYield` field, which
+   is reported in PERCENT (0.32 means 0.32%). Feeding that straight into q as a
+   decimal would be a 100x error that silently wrecks every price, and it would
+   look like a modelling problem rather than a units bug. Measured 2026-09-22:
+   the field said 0.32 for AAPL while the actual trailing payments give 0.389%,
+   so it is both differently scaled AND a different number. Summing the real
+   payments is unambiguous, auditable, and correctly returns zero for a
+   non-payer such as BRK-B.
+"""
+
+from __future__ import annotations
+
+import math
+import os
+import time
+from dataclasses import dataclass, asdict
+
+TRADING_DAYS = 252
+# Fewer returns than this and a volatility estimate is meaningless, not merely
+# imprecise, so the honest answer is None rather than a number.
+MIN_RETURNS = 19
+CACHE_TTL_SECONDS = 60.0
+
+_cache: dict[str, tuple[float, "Quote"]] = {}
+
+
+class MarketDataUnavailable(RuntimeError):
+    """Raised when a quote cannot be fetched. Never fatal to the pricer."""
+
+
+@dataclass(frozen=True)
+class Quote:
+    ticker: str
+    spot: float
+    currency: str
+    as_of: str
+    realized_vol_1y: float | None
+    realized_vol_30d: float | None
+    dividend_yield: float
+    trailing_dividends: float
+    bars_used: int
+    source: str = "Yahoo Finance via yfinance"
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _guard_against_tests() -> None:
+    """Refuse to touch the network from inside a test run.
+
+    Isolation belongs at the RESOURCE, not in each test file. A test that
+    reaches a real service reaches it for real, and a suite that quietly depends
+    on Yahoo being up is a suite that fails for reasons that have nothing to do
+    with the code. Tests inject a fake fetcher instead; see test_market.py.
+    """
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        raise MarketDataUnavailable(
+            "refusing to fetch live market data from inside a test; "
+            "inject a fake fetcher instead"
+        )
+
+
+def _annualised_vol(closes: list[float]) -> float | None:
+    """Standard deviation of daily log returns, annualised by sqrt(252).
+
+    Returns None rather than a number when there is not enough data. A
+    volatility computed from three observations is not a small estimate, it is
+    a meaningless one, and handing it back as though it were a measurement is
+    how a plausible-looking wrong number gets into a price.
+
+    Non-finite closes are dropped HERE rather than relying on the caller having
+    done it. NaN is contagious and raises nothing: one NaN close makes the
+    standard deviation NaN, which becomes sigma, which makes every price NaN
+    with no error anywhere in the chain. Yahoo really does return a NaN close
+    for the current session's bar, so this is a live case and not a hypothetical
+    one. The fetcher filters them too; defence in depth is deliberate, because
+    the failure is silent.
+    """
+    closes = [c for c in closes if isinstance(c, (int, float)) and math.isfinite(c) and c > 0]
+    rets = [math.log(b / a) for a, b in zip(closes, closes[1:])]
+    # ONE guard. There used to be a second, on len(closes) < 20, and since n
+    # closes always give exactly n-1 returns the two fired on identical inputs.
+    # The first was dead code, which a mutation proved by surviving: breaking it
+    # changed nothing because the other one caught every case anyway. A
+    # redundant guard is not defence in depth, it is an untestable line.
+    if len(rets) < MIN_RETURNS:
+        return None
+    mean = sum(rets) / len(rets)
+    var = sum((x - mean) ** 2 for x in rets) / (len(rets) - 1)
+    return math.sqrt(var) * math.sqrt(TRADING_DAYS)
+
+
+def _default_fetcher(ticker: str) -> dict:
+    """Pull the raw pieces from yfinance. The only function here that uses the network."""
+    import pandas as pd
+    import yfinance as yf
+
+    t = yf.Ticker(ticker)
+
+    # An unknown symbol surfaces from yfinance as an assortment of internal
+    # errors (KeyError 'currentTradingPeriod' is the current one), which is
+    # useless to whoever typed the symbol. Translate it once, here, rather than
+    # letting an implementation detail reach the UI.
+    try:
+        fast = t.fast_info
+        spot = fast.get("lastPrice")
+        currency = fast.get("currency") or "USD"
+    except Exception as exc:  # noqa: BLE001
+        raise MarketDataUnavailable(
+            f"no market data for {ticker}. Check the symbol, or type the spot in by hand."
+        ) from exc
+
+    if spot is None:
+        raise MarketDataUnavailable(
+            f"no price returned for {ticker}. Check the symbol, or type the spot in by hand."
+        )
+
+    hist = t.history(period="1y")
+    # Today's bar can carry a NaN close while the session is still open or has
+    # just closed. Taking the last close naively yields NaN, which then
+    # propagates into the volatility and out into a price with no error raised
+    # anywhere. Drop them rather than trusting the last row.
+    closes = [float(c) for c in hist["Close"].tolist() if c == c]
+    last_bar = str(hist.index[-1]) if len(hist.index) else None
+
+    divs = t.dividends
+    trailing = 0.0
+    if len(divs):
+        cutoff = divs.index.max() - pd.Timedelta(days=365)
+        trailing = float(divs[divs.index > cutoff].sum())
+
+    return {
+        "spot": spot,
+        "currency": currency,
+        "closes": closes,
+        "last_bar": last_bar,
+        "trailing_dividends": trailing,
+    }
+
+
+def fetch_quote(ticker: str, fetcher=None, now=None) -> Quote:
+    """Fetch and assemble a Quote. Raises MarketDataUnavailable on any failure.
+
+    `fetcher` is injectable so the whole assembly path, including the units
+    handling that is the actual risk here, can be tested without a network.
+    """
+    ticker = (ticker or "").strip().upper()
+    if not ticker:
+        raise MarketDataUnavailable("no ticker given")
+    if len(ticker) > 12 or not all(c.isalnum() or c in ".-^=" for c in ticker):
+        raise MarketDataUnavailable(f"{ticker!r} does not look like a ticker symbol")
+
+    clock = now or time.time
+    if fetcher is None:
+        _guard_against_tests()
+        hit = _cache.get(ticker)
+        if hit and clock() - hit[0] < CACHE_TTL_SECONDS:
+            return hit[1]
+        fetcher = _default_fetcher
+
+    try:
+        raw = fetcher(ticker)
+    except MarketDataUnavailable:
+        raise
+    except Exception as exc:  # noqa: BLE001 - any upstream failure is the same to us
+        raise MarketDataUnavailable(f"could not fetch {ticker}: {type(exc).__name__}: {exc}") from exc
+
+    spot = raw.get("spot")
+    if spot is None or not isinstance(spot, (int, float)) or spot != spot or spot <= 0:
+        raise MarketDataUnavailable(f"no usable price returned for {ticker}")
+
+    closes = raw.get("closes") or []
+    trailing = float(raw.get("trailing_dividends") or 0.0)
+
+    quote = Quote(
+        ticker=ticker,
+        spot=float(spot),
+        currency=raw.get("currency") or "USD",
+        as_of=raw.get("last_bar") or "unknown",
+        realized_vol_1y=_annualised_vol(closes),
+        realized_vol_30d=_annualised_vol(closes[-31:]) if len(closes) >= 31 else None,
+        # Derived, not read off a field. See the module docstring.
+        dividend_yield=trailing / float(spot),
+        trailing_dividends=trailing,
+        bars_used=len(closes),
+    )
+
+    if fetcher is _default_fetcher:
+        _cache[ticker] = (clock(), quote)
+    return quote

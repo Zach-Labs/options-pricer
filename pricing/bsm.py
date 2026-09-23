@@ -286,6 +286,23 @@ def parity_residual(p: Inputs) -> float:
     return c - put - (p.S * math.exp(-p.q * p.T) - p.K * math.exp(-p.r * p.T))
 
 
+def parity_relative_residual(p: Inputs) -> float:
+    """Parity residual scaled by the size of the numbers it came from.
+
+    An ABSOLUTE tolerance on the raw residual is wrong, because double-precision
+    error grows with magnitude. At a spot of 100 the residual is exactly zero;
+    at 700,000, which is roughly where BRK-A trades and is therefore reachable
+    by typing a real ticker, it is about 3e-11. A fixed 1e-10 threshold passes
+    that with only 3x of headroom, which is a coin flip rather than a check.
+
+    Scaling by max(S, K) keeps the test just as strict in the way that matters:
+    a genuine sign error produces a residual of the same order as the price
+    itself, so the ratio lands near 1 and fails by fourteen orders of magnitude.
+    """
+    scale = max(1.0, abs(p.S), abs(p.K))
+    return parity_residual(p) / scale
+
+
 def _check_kind(kind: str) -> None:
     if kind not in ("call", "put"):
         raise ValueError(f"kind must be 'call' or 'put', got {kind!r}")
