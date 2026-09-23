@@ -140,12 +140,16 @@ def test_charm_matches_numerical(p: Inputs, kind: str) -> None:
 
 
 @pytest.mark.parametrize("p", CASES)
-def test_second_order_greeks_agree_across_call_and_put(p: Inputs) -> None:
+def test_parity_invariant_greeks_agree_across_call_and_put(p: Inputs) -> None:
     """gamma, vega, vanna and volga must be identical for a call and a put.
 
     Put-call parity says C - P = S*exp(-qT) - K*exp(-rT). That difference is
-    linear in S and free of sigma, so every second derivative of it is zero.
-    If a call and a put ever disagree on gamma, one of them is wrong.
+    linear in S and free of sigma, so any derivative of it that is second order
+    or higher in S, or touches sigma at all, is zero. Gamma qualifies on the
+    first count, vega and volga on the second, vanna on both.
+
+    Deliberately NOT called "second order greeks": vega is first order and the
+    tidier name would have made the docstring's own justification wrong.
     """
     c = greeks(p, "call")
     put = greeks(p, "put")

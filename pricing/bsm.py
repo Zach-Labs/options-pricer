@@ -181,9 +181,15 @@ def greeks(p: Inputs, kind: str) -> dict[str, float]:
     disc_r = math.exp(-p.r * p.T)
     pdf_d1 = norm_pdf(d1)
 
-    # Second-order greeks are identical for calls and puts. Put-call parity
-    # differs by S*exp(-qT) - K*exp(-rT), which is linear in S and has no
-    # sigma dependence at all, so every second derivative of it vanishes.
+    # gamma, vega, vanna and volga are identical for calls and puts. Put-call
+    # parity differs by S*exp(-qT) - K*exp(-rT), which is LINEAR IN S and has
+    # NO sigma in it at all. So any derivative of that difference which is
+    # either second-or-higher order in S, or touches sigma even once, is zero.
+    # That covers all four, including vega, which is only first order.
+    #
+    # (Saying "the second derivatives vanish" would be the tidier sentence and
+    # it does not actually cover vega. Worth getting right: it is the kind of
+    # thing someone pokes at.)
     gamma = disc_q * pdf_d1 / (p.S * vol_t)
     vega = p.S * disc_q * pdf_d1 * sqrt_t
     vanna = -disc_q * pdf_d1 * d2 / p.sigma

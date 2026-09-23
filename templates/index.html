@@ -444,8 +444,14 @@ put  = K·e^(-rT)·Φ(-d₂) - S·e^(-qT)·Φ(-d₁)</div>
       <p>
         One structural fact worth carrying: gamma, vega, vanna and volga are <strong>identical for a
         call and a put</strong>. That is not a coincidence to memorise, it follows from parity. The
-        difference C - P is linear in S and has no σ in it at all, so every second derivative of
-        that difference is zero. The suite asserts it.
+        difference C - P is <strong>linear in S and has no σ in it at all</strong>, so any derivative
+        of that difference which is either second order or higher in S, or touches σ even once, is
+        zero. Gamma is the first kind, vega and volga the second, vanna both. The suite asserts it.
+      </p>
+      <p class="footnote">
+        Note the wording: "the second derivatives vanish" is the tidier sentence and it does not
+        cover vega, which is only a first derivative. It is still identical across calls and puts,
+        and the reason is the missing σ rather than the linearity in S.
       </p>
       <div class="code-block" data-symbol="bsm/greeks"></div>
     </section>
@@ -503,8 +509,11 @@ V = e^(-r·dt)·[ q·V_u + (1 - q)·V_d ],    q = (e^((r-q_div)·dt) - d) / (u -
         <strong>q was never assumed.</strong> Nobody estimated a probability and nobody expressed a
         view. It fell out of solving two linear equations in two unknowns. It happens to behave like
         a probability, and it is the risk-neutral measure in its simplest possible form: check that
-        q·u + (1-q)·d = e^(r·dt), so under q the stock grows at exactly the risk-free rate. Not
-        because it does, but because that is the measure under which hedged prices are consistent.
+        q·u + (1-q)·d = e^((r-q_div)·dt), so under q the stock grows at exactly the risk-free rate
+        net of the dividend yield. Not because it does, but because that is the measure under which
+        hedged prices are consistent. With no dividend that is just the risk-free rate, which is the
+        case worth carrying in your head, but the dividend term is in the code and it belongs here
+        too.
       </p>
       <p>
         The real-world probability of an up move appears nowhere, which is the same phenomenon as μ

@@ -268,3 +268,90 @@ def test_lattice_detail_marks_an_exercise_boundary_on_an_american_put() -> None:
 
     assert interior_flags(6, american=True) > 0
     assert interior_flags(6, american=False) == 0
+
+
+# ------------------------------------------- the degenerate branch (T=0, sigma=0)
+
+
+"""Why this block exists.
+
+_is_degenerate / _degenerate_price / _degenerate_greeks had ZERO coverage: two
+mutations planted inside them (swapping the call and put payoff, flipping the
+ITM sign logic) left all 183 other tests green. The code was correct, but it
+was one silent edit away from breaking with nothing to catch it.
+
+It is also live-reachable rather than theoretical: app.py computes T = 0 the
+moment the date picker's expiry equals today, which is a thing a user does on
+expiry day.
+"""
+
+
+@pytest.mark.parametrize(
+    "S,kind,expected",
+    [
+        (110, "call", 10.0),   # in the money by 10
+        (90, "call", 0.0),     # out of the money
+        (100, "call", 0.0),    # exactly at the kink
+        (90, "put", 10.0),
+        (110, "put", 0.0),
+        (100, "put", 0.0),
+    ],
+)
+def test_at_expiry_the_price_is_exactly_the_payoff(S: float, kind: str, expected: float) -> None:
+    """T = 0 must return max(S-K, 0) or max(K-S, 0) exactly, with no NaN.
+
+    The formulas divide by sigma*sqrt(T), so this branch has to be handled
+    rather than computed. If it were not, the NaN would propagate silently into
+    every greek rather than raising anywhere visible.
+    """
+    p = Inputs(S=S, K=100, T=0.0, r=0.05, sigma=0.20)
+    assert price(p, kind) == pytest.approx(expected, abs=1e-12)
+
+
+@pytest.mark.parametrize("kind", ["call", "put"])
+@pytest.mark.parametrize("S", [80, 100, 120])
+def test_zero_volatility_prices_against_the_known_forward(kind: str, S: float) -> None:
+    """With sigma = 0 the terminal price is certain, so the value is exact.
+
+    The stock must arrive at S*exp((r-q)T), so the option is worth the
+    discounted intrinsic value against that forward, floored at zero. No normal
+    distribution is involved at all.
+    """
+    p = Inputs(S=S, K=100, T=1.0, r=0.05, sigma=0.0, q=0.02)
+    fwd = p.S * math.exp(-p.q * p.T)
+    disc_k = p.K * math.exp(-p.r * p.T)
+    expected = max(fwd - disc_k, 0.0) if kind == "call" else max(disc_k - fwd, 0.0)
+    assert price(p, kind) == pytest.approx(expected, abs=1e-12)
+
+
+@pytest.mark.parametrize("kind", ["call", "put"])
+def test_degenerate_greeks_are_finite_and_have_the_right_delta(kind: str) -> None:
+    """At expiry, delta is 1 or -1 in the money and 0 out of it, everything else 0.
+
+    Asserting finiteness matters as much as the values: the whole point of the
+    branch is that nothing here is allowed to be NaN.
+    """
+    itm = Inputs(S=130 if kind == "call" else 70, K=100, T=0.0, r=0.05, sigma=0.20)
+    otm = Inputs(S=70 if kind == "call" else 130, K=100, T=0.0, r=0.05, sigma=0.20)
+
+    g_itm = greeks(itm, kind)
+    assert g_itm["delta"] == pytest.approx(1.0 if kind == "call" else -1.0, abs=1e-12)
+
+    g_otm = greeks(otm, kind)
+    assert g_otm["delta"] == pytest.approx(0.0, abs=1e-12)
+
+    for g in (g_itm, g_otm):
+        for name, value in g.items():
+            assert math.isfinite(value), f"{name} is not finite in the degenerate branch"
+            if name != "delta":
+                assert value == pytest.approx(0.0, abs=1e-12)
+
+
+def test_parity_still_holds_in_the_degenerate_branch() -> None:
+    """Parity is an identity, so it cannot be excused at the edge of the domain."""
+    for p in (
+        Inputs(S=110, K=100, T=0.0, r=0.05, sigma=0.20),
+        Inputs(S=90, K=100, T=0.0, r=0.05, sigma=0.20),
+        Inputs(S=100, K=100, T=1.0, r=0.05, sigma=0.0, q=0.02),
+    ):
+        assert abs(parity_residual(p)) < 1e-12
