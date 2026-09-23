@@ -32,6 +32,7 @@ Three things it returns, and the honesty notes on each matter more than the code
 
 from __future__ import annotations
 
+import datetime
 import math
 import os
 import time
@@ -112,9 +113,49 @@ def _annualised_vol(closes: list[float]) -> float | None:
     return math.sqrt(var) * math.sqrt(TRADING_DAYS)
 
 
+def trailing_dividend_total(payments, as_of: datetime.date) -> float:
+    """Dividends paid in the 365 days ending at `as_of`.
+
+    `payments` is an iterable of (date, amount). Extracted out of the fetcher
+    deliberately: this is the part with the actual risk in it, and while it
+    lived inside the networked function no test could reach it. Every test
+    injected a pre-computed total and skipped this arithmetic entirely.
+
+    The bug that forced this out (found in review, verified against live AAPL
+    data): the window used to be anchored to the LAST PAYMENT DATE rather than
+    to today.
+
+        cutoff = divs.index.max() - 365 days      # wrong
+        cutoff = today - 365 days                 # right
+
+    Anchoring to the last payment slides the window backwards by however long
+    it has been since that payment, which pulls an extra historical payment in.
+    On AAPL, 44 days after its last ex-date, that captured FIVE quarterly
+    payments instead of four: 1.32 against a correct 1.06, a 24.5% overstated
+    yield, flowing silently into q and from there into d1, the discounting, and
+    delta, theta and charm.
+
+    Worse in the other direction: a company that SUSPENDED its dividend two
+    years ago still reports a full year of payments, because the window follows
+    the payments backwards instead of staying put. A non-payer is reported as a
+    payer, with nothing raised anywhere.
+
+    Future-dated payments are excluded too. A declared-but-not-yet-paid ex-date
+    can appear in the series, and counting it would inflate a TRAILING figure
+    with something that has not happened.
+    """
+    cutoff = as_of - datetime.timedelta(days=365)
+    return float(sum(amount for when, amount in payments if cutoff < when <= as_of))
+
+
 def _default_fetcher(ticker: str) -> dict:
     """Pull the raw pieces from yfinance. The only function here that uses the network."""
-    import pandas as pd
+    # Guarded here as well as in fetch_quote. The module argues elsewhere that
+    # a silent failure deserves two checks rather than one, and a test that
+    # quietly reaches Yahoo is exactly that kind of failure, so the leaf gets
+    # the same treatment as the entry point.
+    _guard_against_tests()
+
     import yfinance as yf
 
     t = yf.Ticker(ticker)
@@ -146,10 +187,8 @@ def _default_fetcher(ticker: str) -> dict:
     last_bar = str(hist.index[-1]) if len(hist.index) else None
 
     divs = t.dividends
-    trailing = 0.0
-    if len(divs):
-        cutoff = divs.index.max() - pd.Timedelta(days=365)
-        trailing = float(divs[divs.index > cutoff].sum())
+    payments = [(ts.date(), float(amount)) for ts, amount in divs.items()]
+    trailing = trailing_dividend_total(payments, datetime.date.today())
 
     return {
         "spot": spot,
@@ -160,7 +199,7 @@ def _default_fetcher(ticker: str) -> dict:
     }
 
 
-def fetch_quote(ticker: str, fetcher=None, now=None) -> Quote:
+def fetch_quote(ticker: str, fetcher=None, now=None, use_cache: bool = True) -> Quote:
     """Fetch and assemble a Quote. Raises MarketDataUnavailable on any failure.
 
     `fetcher` is injectable so the whole assembly path, including the units
@@ -175,10 +214,15 @@ def fetch_quote(ticker: str, fetcher=None, now=None) -> Quote:
     clock = now or time.time
     if fetcher is None:
         _guard_against_tests()
+        fetcher = _default_fetcher
+
+    # Checked for every caller, not only the live one, so the cache is
+    # reachable from a test with an injected fetcher and a fake clock. It had
+    # no coverage at all while it sat behind the network guard.
+    if use_cache:
         hit = _cache.get(ticker)
         if hit and clock() - hit[0] < CACHE_TTL_SECONDS:
             return hit[1]
-        fetcher = _default_fetcher
 
     try:
         raw = fetcher(ticker)
@@ -207,6 +251,6 @@ def fetch_quote(ticker: str, fetcher=None, now=None) -> Quote:
         bars_used=len(closes),
     )
 
-    if fetcher is _default_fetcher:
+    if use_cache:
         _cache[ticker] = (clock(), quote)
     return quote

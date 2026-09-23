@@ -19,7 +19,13 @@ from pricing.binomial import (
     price_tree,
     tree_delta,
 )
-from pricing.bsm import Inputs, greeks, parity_relative_residual, parity_residual, price
+from pricing.bsm import (
+    Inputs,
+    greeks,
+    parity_relative_residual,
+    parity_residual,
+    price,
+)
 
 # The reference case handed out with the assignment.
 BENCH = Inputs(S=100, K=100, T=1.0, r=0.05, sigma=0.20)
@@ -402,8 +408,62 @@ def test_the_parity_scaling_is_the_stated_one_not_an_arbitrary_constant() -> Non
         Inputs(S=100, K=100, T=1.0, r=0.05, sigma=0.20),
         Inputs(S=700_000, K=650_000, T=2.0, r=0.04, sigma=0.35, q=0.01),
         Inputs(S=0.5, K=0.75, T=0.5, r=0.03, sigma=0.60),
+        # K FAR above S, and above 1, so the max() actually needs its K term.
+        Inputs(S=100, K=100_000, T=1.0, r=0.05, sigma=0.20),
+        Inputs(S=0.01, K=5_000, T=0.75, r=0.03, sigma=0.40),
     ):
         expected_scale = max(1.0, abs(p.S), abs(p.K))
         assert parity_relative_residual(p) == pytest.approx(
             parity_residual(p) / expected_scale, rel=1e-12, abs=1e-18
+        )
+
+
+def test_the_parity_scale_divides_by_K_when_K_is_the_larger(  # noqa: D401
+) -> None:
+    """Prove the K term in max(1, |S|, |K|) is load-bearing.
+
+    Adding K > S cases to the identity test above was NOT enough, and the
+    reason is worth keeping because it is a trap rather than an oversight:
+    put-call parity is EXACTLY zero for almost every input, and
+
+        0 / scale_a  ==  0 / scale_b
+
+    for any two scales. So an assertion of the form
+    relative == residual / expected_scale is completely vacuous whenever the
+    residual is zero, which is nearly always. A mutation deleting abs(p.K)
+    survived the whole suite for exactly that reason.
+
+    These two cases were found by searching for K > S inputs whose residual is
+    genuinely non-zero, which is what makes the divisor observable at all. The
+    test asserts its OWN premise first, so that if a future change makes these
+    residuals zero, this fails loudly rather than going quietly vacuous again.
+    """
+    cases = [
+        Inputs(S=0.5, K=3.5, T=1.3, r=0.047, sigma=0.31, q=0.013),
+        Inputs(S=1234.5, K=8641.5, T=1.3, r=0.047, sigma=0.31, q=0.013),
+    ]
+    for p in cases:
+        residual = parity_residual(p)
+
+        # Assert the premise. Without a non-zero residual this test proves
+        # nothing at all, so it must refuse rather than pass.
+        assert residual != 0.0, (
+            "this test is vacuous unless the residual is non-zero; "
+            f"got exactly 0 for S={p.S} K={p.K}"
+        )
+        assert p.K > p.S and p.K > 1.0, "K must be the term the max() selects"
+
+        relative = parity_relative_residual(p)
+
+        # Recover the divisor rather than comparing two ~1e-16 quantities.
+        # Comparing them directly does not work: pytest.approx carries a
+        # DEFAULT ABSOLUTE tolerance of 1e-12, so any two numbers that small
+        # compare equal no matter how different they are, and the "must not
+        # equal" assertion silently could not fail. Dividing recovers a number
+        # of order K, where the tolerances mean what they look like they mean.
+        recovered_scale = residual / relative
+
+        assert recovered_scale == pytest.approx(p.K, rel=1e-9)
+        assert recovered_scale != pytest.approx(max(1.0, p.S), rel=1e-9), (
+            "the scale ignored K; dropping abs(p.K) from the max would do this"
         )

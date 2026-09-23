@@ -210,3 +210,140 @@ def test_the_boundary_for_refusing_is_exactly_where_it_claims_to_be() -> None:
     base = [100.0 * (1.01 if i % 2 else 0.99) for i in range(40)]
     assert _annualised_vol(base[:19]) is None       # 18 returns
     assert _annualised_vol(base[:20]) is not None   # 19 returns
+
+
+# ----------------------------------------- the trailing-dividend window itself
+
+import datetime  # noqa: E402
+
+from pricing.market import _cache, trailing_dividend_total  # noqa: E402
+
+TODAY = datetime.date(2026, 9, 23)
+
+
+def quarterly(last: datetime.date, n: int, amount: float = 0.26):
+    """n quarterly payments ending at `last`, oldest first."""
+    return [(last - datetime.timedelta(days=91 * i), amount) for i in range(n)][::-1]
+
+
+def test_the_window_is_anchored_to_today_not_to_the_last_payment() -> None:
+    """The HIGH finding from review, pinned with the real numbers.
+
+    AAPL's last ex-date was 2026-08-10, 44 days before 2026-09-23. Anchoring
+    the 365-day window to that payment instead of to today slides the window
+    back 44 days and pulls a FIFTH quarterly payment in: 1.32 against a correct
+    1.06, a 24.5% overstatement, flowing silently into q and from there into
+    d1, the discounting, delta, theta and charm.
+    """
+    payments = [
+        (datetime.date(2025, 2, 10), 0.25),
+        (datetime.date(2025, 5, 12), 0.26),
+        (datetime.date(2025, 8, 11), 0.26),
+        (datetime.date(2025, 11, 10), 0.26),
+        (datetime.date(2026, 2, 9), 0.26),
+        (datetime.date(2026, 5, 11), 0.27),
+        (datetime.date(2026, 8, 10), 0.27),
+    ]
+    assert trailing_dividend_total(payments, TODAY) == pytest.approx(1.06)
+
+    # And explicitly NOT the old answer, so a revert cannot pass quietly.
+    assert trailing_dividend_total(payments, TODAY) != pytest.approx(1.32)
+
+
+def test_a_suspended_dividend_reports_zero_rather_than_a_stale_year() -> None:
+    """The worse direction of the same bug: a non-payer reported as a payer.
+
+    A company that stopped paying two years ago has a last-payment date two
+    years back, so a window anchored to it still sits over a full year of
+    historical payments and returns a healthy yield for a stock that now pays
+    nothing at all, with no error raised anywhere.
+    """
+    stopped = quarterly(datetime.date(2024, 9, 1), 4)
+    assert trailing_dividend_total(stopped, TODAY) == 0.0
+
+
+def test_a_declared_but_unpaid_future_dividend_is_excluded() -> None:
+    """A trailing figure must not include something that has not happened."""
+    payments = quarterly(datetime.date(2026, 8, 10), 4) + [
+        (datetime.date(2026, 11, 9), 0.27),  # declared, ex-date still ahead
+    ]
+    assert trailing_dividend_total(payments, TODAY) == pytest.approx(0.26 * 4)
+
+
+def test_exactly_on_the_boundary_is_excluded_and_one_day_inside_is_not() -> None:
+    """Pin the boundary rather than leaving it to chance."""
+    on_it = TODAY - datetime.timedelta(days=365)
+    assert trailing_dividend_total([(on_it, 1.0)], TODAY) == 0.0
+    assert trailing_dividend_total([(on_it + datetime.timedelta(days=1), 1.0)], TODAY) == 1.0
+    assert trailing_dividend_total([(TODAY, 1.0)], TODAY) == 1.0
+
+
+def test_a_non_payer_has_no_payments_at_all() -> None:
+    assert trailing_dividend_total([], TODAY) == 0.0
+
+
+# ---------------------------------------------------------------- the cache
+
+
+@pytest.fixture(autouse=True)
+def clear_quote_cache():
+    """The cache is module state, so it has to be reset between tests."""
+    _cache.clear()
+    yield
+    _cache.clear()
+
+
+def test_a_repeat_fetch_inside_the_ttl_is_served_from_cache() -> None:
+    calls = []
+
+    def counting(ticker):
+        calls.append(ticker)
+        return make_raw()
+
+    t = [1000.0]
+    fetch_quote("AAA", fetcher=counting, now=lambda: t[0])
+    fetch_quote("AAA", fetcher=counting, now=lambda: t[0] + 30)
+    assert len(calls) == 1, "second call inside the TTL should not have refetched"
+
+
+def test_the_cache_expires_and_does_not_serve_a_stale_quote() -> None:
+    calls = []
+
+    def counting(ticker):
+        calls.append(ticker)
+        return make_raw()
+
+    t = [1000.0]
+    fetch_quote("AAA", fetcher=counting, now=lambda: t[0])
+    fetch_quote("AAA", fetcher=counting, now=lambda: t[0] + 61)
+    assert len(calls) == 2, "a quote older than the TTL should have been refetched"
+
+
+def test_the_cache_does_not_collide_across_tickers() -> None:
+    def per_ticker(ticker):
+        return make_raw(spot=100.0 if ticker == "AAA" else 200.0)
+
+    t = [1000.0]
+    a = fetch_quote("AAA", fetcher=per_ticker, now=lambda: t[0])
+    b = fetch_quote("BBB", fetcher=per_ticker, now=lambda: t[0])
+    assert (a.spot, b.spot) == (100.0, 200.0)
+
+
+def test_the_leaf_fetcher_refuses_too_not_just_the_entry_point() -> None:
+    """Defence in depth on the network guard, asserted rather than claimed.
+
+    fetch_quote checks PYTEST_CURRENT_TEST, and _default_fetcher checks it
+    again. The second check is redundant for every current call site, which
+    means it is exactly the kind of line that rots untested: a mutation
+    deleting it survived the whole suite, the same shape as the dead guard
+    already removed from _annualised_vol.
+
+    A guard nobody tests is not defence in depth, it is decoration. So this
+    calls the leaf directly. If someone later adds a caller that reaches
+    _default_fetcher without going through fetch_quote, this is what stops the
+    suite quietly starting to depend on Yahoo being up.
+    """
+    from pricing.market import _default_fetcher
+
+    with pytest.raises(MarketDataUnavailable, match="refusing to fetch live market data"):
+        _default_fetcher("AAPL")
