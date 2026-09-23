@@ -427,8 +427,13 @@ function renderChain() {
 
   const rows = near.map((r) => {
     const atm = Math.abs(r.strike - d.spot) < d.spot * 0.008;
+    // Flag a row whose implied vol is real but imprecise. Vega varies by ten
+    // orders of magnitude across one chain, so the same price noise is
+    // invisible at the money and material in the wings.
+    const shaky = r.implied_vol !== null && r.implied_vol_uncertainty > 1e-5;
     const iv = r.implied_vol !== null
-      ? `<span class="ours">${(r.implied_vol * 100).toFixed(2)}%</span>`
+      ? `<span class="ours">${(r.implied_vol * 100).toFixed(2)}%</span>` +
+        (shaky ? `<span class="bad-iv" title="only pinned to about ${(r.implied_vol_uncertainty * 100).toFixed(3)} vol points here, because vega is small at this strike"> ±${(r.implied_vol_uncertainty * 100).toFixed(2)}</span>` : "")
       : `<span class="bad-iv" title="${(r.implied_vol_error || "").replace(/"/g, "&quot;")}">no vol</span>`;
     const yiv = r.yahoo_implied_vol !== null
       ? `<span class="dim">${(r.yahoo_implied_vol * 100).toFixed(3)}%</span>` : "-";

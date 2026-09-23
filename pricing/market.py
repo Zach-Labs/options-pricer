@@ -273,6 +273,7 @@ class ChainRow:
     open_interest: float
     last_trade: str
     implied_vol: float | None
+    implied_vol_uncertainty: float | None
     implied_vol_error: str | None
     yahoo_implied_vol: float | None
     in_the_money: bool
@@ -303,14 +304,22 @@ def build_chain(rows, spot: float, T: float, r: float, q: float, kind: str) -> l
     price below intrinsic means a stale quote, and a price flat in volatility
     means the contract carries no volatility information at all.
     """
-    from pricing.bsm import NoImpliedVol, implied_vol
+    from pricing.bsm import NoImpliedVol, implied_vol_with_uncertainty
 
     out: list[ChainRow] = []
     for row in rows:
         iv: float | None = None
+        unc: float | None = None
         err: str | None = None
         try:
-            iv = implied_vol(float(row["lastPrice"]), spot, float(row["strike"]), T, r, kind, q=q)
+            # Keep the uncertainty, do not discard it. An implied vol is only
+            # as good as the vega behind it, and that varies by ten orders of
+            # magnitude across one chain. A row quoted to four decimals that is
+            # only good to two is the kind of thing nobody notices until it
+            # matters.
+            iv, unc = implied_vol_with_uncertainty(
+                float(row["lastPrice"]), spot, float(row["strike"]), T, r, kind, q=q
+            )
         except (NoImpliedVol, ValueError, TypeError) as exc:
             err = str(exc)
 
@@ -323,6 +332,7 @@ def build_chain(rows, spot: float, T: float, r: float, q: float, kind: str) -> l
                 open_interest=float(row.get("openInterest") or 0.0),
                 last_trade=str(row.get("lastTradeDate") or "")[:19],
                 implied_vol=iv,
+                implied_vol_uncertainty=unc,
                 implied_vol_error=err,
                 yahoo_implied_vol=float(yahoo) if yahoo is not None else None,
                 in_the_money=bool(row.get("inTheMoney", False)),

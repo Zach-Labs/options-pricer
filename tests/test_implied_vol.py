@@ -11,7 +11,17 @@ import math
 
 import pytest
 
-from pricing.bsm import Inputs, NoImpliedVol, implied_vol, price
+from pricing.bsm import (
+    MAX_SEARCH_VOL,
+    MAX_VOL_UNCERTAINTY,
+    Inputs,
+    NoImpliedVol,
+    implied_vol,
+    implied_vol_with_uncertainty,
+    price,
+    price_noise_floor,
+    vol_uncertainty,
+)
 
 KINDS = ["call", "put"]
 CASES = [
@@ -51,19 +61,26 @@ def test_round_trip_recovers_the_volatility_it_was_priced_with(
     every case was degenerate.
     """
     target = price(Inputs(S=S, K=K, T=T, r=r, sigma=sigma, q=q), kind)
-    floor = price(Inputs(S=S, K=K, T=T, r=r, sigma=1e-9, q=q), kind)
-    time_value = target - floor
 
     try:
-        recovered = implied_vol(target, S, K, T, r, kind, q=q)
+        recovered, uncertainty = implied_vol_with_uncertainty(target, S, K, T, r, kind, q=q)
     except NoImpliedVol:
-        assert time_value < 1e-12, (
-            f"refused to invert an option with real time value {time_value:.3e}; "
-            f"that is a solver failure, not a degenerate contract"
+        # Justify the refusal against the SAME measure the solver used, rather
+        # than a separate hand-picked threshold on time value. An independent
+        # magic number here would only be testing whether two arbitrary cutoffs
+        # happened to agree.
+        at_truth = vol_uncertainty(S, K, T, r, kind, sigma, q=q)
+        assert at_truth > MAX_VOL_UNCERTAINTY, (
+            f"refused a contract whose volatility is identifiable to "
+            f"{at_truth:.3e} vol points; that is a solver failure, not a "
+            f"degenerate contract"
         )
         return
 
-    assert recovered == pytest.approx(sigma, abs=1e-6)
+    # Accepted, so the recovered value must be good to the precision the solver
+    # itself claims, with a little slack for the bisection tolerance.
+    assert recovered == pytest.approx(sigma, abs=max(1e-6, 10 * uncertainty))
+    assert uncertainty <= MAX_VOL_UNCERTAINTY
 
 
 def test_the_degenerate_cases_really_are_degenerate() -> None:
@@ -84,7 +101,7 @@ def test_the_degenerate_cases_really_are_degenerate() -> None:
             target = price(Inputs(S=S, K=K, T=T, r=r, sigma=0.05, q=q), kind)
             floor = price(Inputs(S=S, K=K, T=T, r=r, sigma=1e-9, q=q), kind)
             assert target - floor < 2e-15
-            with pytest.raises(NoImpliedVol, match="no volatility information"):
+            with pytest.raises(NoImpliedVol, match="does not pin down a volatility"):
                 implied_vol(target, S, K, T, r, kind, q=q)
 
 
@@ -131,7 +148,7 @@ def test_a_price_below_the_no_arbitrage_floor_is_refused_not_approximated(kind: 
 
 @pytest.mark.parametrize("kind", KINDS)
 def test_an_impossibly_high_price_is_refused(kind: str) -> None:
-    with pytest.raises(NoImpliedVol, match="exceeds"):
+    with pytest.raises(NoImpliedVol, match="above the highest price this solver searches"):
         implied_vol(10_000.0, 100, 100, 1.0, 0.05, kind)
 
 
@@ -202,3 +219,80 @@ def test_implied_vol_is_finite_and_positive_everywhere_it_succeeds() -> None:
             target = price(Inputs(S=S, K=K, T=T, r=r, sigma=0.3, q=q), kind)
             iv = implied_vol(target, S, K, T, r, kind, q=q)
             assert math.isfinite(iv) and iv > 0
+
+
+# ------------------------------------------------- the uncertainty machinery
+
+
+def test_uncertainty_is_the_price_noise_divided_by_vega() -> None:
+    """Pin the error-propagation relation itself, not just its consequences.
+
+    dSigma = dPrice / vega. Without this the constant inside price_noise_floor
+    is unpinned: it was possible to inflate it by four orders of magnitude and
+    have every test still pass, which would silently start refusing perfectly
+    well-identified contracts.
+    """
+    from pricing.bsm import greeks
+
+    for S, K, T, r, q in CASES:
+        for kind in KINDS:
+            sigma = 0.3
+            vega = greeks(Inputs(S=S, K=K, T=T, r=r, sigma=sigma, q=q), kind)["vega"]
+            expected = price_noise_floor(S, K) / vega
+            assert vol_uncertainty(S, K, T, r, kind, sigma, q=q) == pytest.approx(
+                expected, rel=1e-12
+            )
+
+
+def test_the_noise_floor_stays_within_a_sane_band_of_machine_epsilon() -> None:
+    """Bound the constant so it cannot drift by orders of magnitude.
+
+    The cancellation argument says the floor is of order eps*max(S, K); the
+    allowance for a handful of rounded operations on top is small. Anything
+    from 1x to 100x is defensible. Four orders of magnitude is not, and that is
+    exactly what used to pass unnoticed.
+    """
+    eps = 2.220446049250313e-16
+    for S, K in [(1.0, 1.0), (100.0, 100.0), (7.5, 10.0), (700_000.0, 650_000.0)]:
+        floor = price_noise_floor(S, K)
+        ratio = floor / (eps * max(S, K))
+        assert 1.0 <= ratio <= 100.0, f"noise floor is {ratio:g}x eps*max(S,K)"
+
+
+def test_uncertainty_is_tiny_at_the_money_and_large_in_the_dead_wings() -> None:
+    """The measure has to actually discriminate, or it is not measuring anything."""
+    atm = vol_uncertainty(100, 100, 1.0, 0.05, "call", 0.25)
+    dead = vol_uncertainty(140, 100, 1.0, 0.05, "call", 0.054)
+
+    assert atm < 1e-12
+    assert dead > atm * 1e6
+    assert math.isinf(vol_uncertainty(140, 100, 1.0, 0.05, "call", 1e-9))
+
+
+def test_a_contract_above_the_search_range_says_so_without_overstating_the_model() -> None:
+    """The refusal must blame the search range, not claim the model cannot do it.
+
+    As sigma grows a call tends to S*exp(-qT), so the model can produce far
+    more than the top of the bracket. Saying otherwise sends someone hunting a
+    bug in the pricer that is not there.
+    """
+    S, K, T, r = 100.0, 100.0, 0.1, 0.05
+    beyond = price(Inputs(S=S, K=K, T=T, r=r, sigma=MAX_SEARCH_VOL * 1.5), "call")
+    with pytest.raises(NoImpliedVol) as exc:
+        implied_vol(beyond, S, K, T, r, "call")
+
+    message = str(exc.value)
+    assert "search range being exceeded, not the model" in message
+    assert f"{MAX_SEARCH_VOL * 100:.0f}%" in message
+
+
+def test_the_search_range_reaches_volatilities_that_actually_trade() -> None:
+    """0DTE and catalyst weeklies really do print several hundred percent.
+
+    The bracket used to stop at 500%, which refused genuine contracts above it.
+    """
+    assert MAX_SEARCH_VOL >= 8.0
+    S, K, T, r = 100.0, 100.0, 0.02, 0.05
+    for sigma in (3.0, 5.0, 7.5):
+        target = price(Inputs(S=S, K=K, T=T, r=r, sigma=sigma), "call")
+        assert implied_vol(target, S, K, T, r, "call") == pytest.approx(sigma, abs=1e-5)
