@@ -282,6 +282,45 @@ class ChainRow:
         return asdict(self)
 
 
+def _finite(value, default: float = 0.0) -> float:
+    """Coerce a feed value to a finite float, or fall back.
+
+    Feeds really do send NaN in numeric columns: an illiquid strike comes back
+    with `volume: NaN` rather than 0 or null. That matters more than it looks,
+    because `NaN or 0.0` evaluates to NaN. NaN is truthy, so the obvious
+    `float(row.get("volume") or 0.0)` idiom passes it straight through.
+
+    It then reaches the browser as a bare `NaN` token, because Python's json
+    module emits that by default as a non-standard extension and happily reads
+    it back, so nothing fails on the Python side. The browser's JSON.parse is
+    strict and rejects it, so the whole response fails to parse and the page
+    shows a raw parser error instead of a chain. One illiquid strike takes down
+    the entire view.
+    """
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    return f if math.isfinite(f) else default
+
+
+def _finite_or_none(value) -> float | None:
+    """Finite float, or None. For DISPLAYED values where absence is meaningful.
+
+    Deliberately not _finite(..., default=0.0). This is the feed's own implied
+    volatility, shown beside ours for comparison, and substituting a zero would
+    read as "the feed says zero volatility" rather than "the feed gave no
+    value". Those are different statements and only one of them is true.
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
 def build_chain(rows, spot: float, T: float, r: float, q: float, kind: str) -> list[ChainRow]:
     """Turn raw chain rows into ChainRows, inverting each price for its own vol.
 
@@ -323,18 +362,21 @@ def build_chain(rows, spot: float, T: float, r: float, q: float, kind: str) -> l
         except (NoImpliedVol, ValueError, TypeError) as exc:
             err = str(exc)
 
-        yahoo = row.get("impliedVolatility")
+        yahoo_raw = row.get("impliedVolatility")
         out.append(
             ChainRow(
-                strike=float(row["strike"]),
-                last_price=float(row["lastPrice"]),
-                volume=float(row.get("volume") or 0.0),
-                open_interest=float(row.get("openInterest") or 0.0),
+                strike=_finite(row["strike"]),
+                last_price=_finite(row["lastPrice"]),
+                volume=_finite(row.get("volume")),
+                open_interest=_finite(row.get("openInterest")),
                 last_trade=str(row.get("lastTradeDate") or "")[:19],
                 implied_vol=iv,
                 implied_vol_uncertainty=unc,
                 implied_vol_error=err,
-                yahoo_implied_vol=float(yahoo) if yahoo is not None else None,
+                # None rather than 0.0 when absent or non-finite: this is a
+                # DISPLAYED comparison figure, and a fabricated zero would read
+                # as "the feed says zero volatility" rather than "no value".
+                yahoo_implied_vol=_finite_or_none(yahoo_raw),
                 in_the_money=bool(row.get("inTheMoney", False)),
             )
         )
