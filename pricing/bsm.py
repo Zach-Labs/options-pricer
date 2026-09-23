@@ -306,3 +306,121 @@ def parity_relative_residual(p: Inputs) -> float:
 def _check_kind(kind: str) -> None:
     if kind not in ("call", "put"):
         raise ValueError(f"kind must be 'call' or 'put', got {kind!r}")
+
+
+class NoImpliedVol(ValueError):
+    """Raised when no volatility can reproduce the given price.
+
+    Not a solver failure. It means the price itself is outside what the model
+    can produce for ANY sigma, which is information: either the quote is stale
+    or wrong, or the inputs (rate, dividend, time to expiry) do not match the
+    contract that traded.
+    """
+
+
+def implied_vol(
+    target_price: float,
+    S: float,
+    K: float,
+    T: float,
+    r: float,
+    kind: str,
+    q: float = 0.0,
+    tol: float = 1e-10,
+    max_iter: int = 200,
+) -> float:
+    """Solve for the sigma that makes the BSM price equal an observed price.
+
+    This is Black-Scholes used BACKWARDS, and it is how the formula is actually
+    used on a desk. Nobody feeds a volatility in to get a price out; they read
+    the traded price and ask what volatility the formula would need to produce
+    it. That number is the implied volatility, and it, not the dollar price, is
+    what gets quoted, compared across strikes and expiries, and traded.
+
+    Why the inversion is well posed: vega is strictly positive for a European
+    option, so the price is a strictly INCREASING function of sigma. It runs
+    from the no-arbitrage floor (discounted intrinsic, at sigma = 0) up towards
+    the underlying's discounted value as sigma grows without bound. A strictly
+    monotone function has a unique inverse, so there is exactly one answer or
+    none, never several.
+
+    Method: bisection, deliberately. Newton converges faster and is the obvious
+    choice, but its derivative is vega, and vega collapses towards zero for
+    deep in- or out-of-the-money options, which is exactly where a real quote
+    is most likely to be odd. Dividing by a near-zero derivative there throws
+    the iterate somewhere useless. Bisection cannot diverge and cannot
+    overshoot. Robustness beats speed for something that runs once per click.
+
+    `tol` is a tolerance on SIGMA, not on price. That distinction is not
+    pedantic: option prices here span from 1e-5 to 1e+2 dollars, and a fixed
+    price tolerance means completely different precision at the two ends. A
+    1e-8 price tolerance against a price of 1.8e-5 stops the search while the
+    answer is still wrong in the fifth decimal. Bisecting until the sigma
+    bracket is narrow is magnitude-independent and controls the thing the
+    caller actually receives.
+
+    Raises NoImpliedVol when the price is outside the achievable range, and
+    ALSO when the price carries no information about sigma. That second case is
+    real and easy to miss: for a deep out-of-the-money, short-dated, low-vol
+    option, the entire volatility value can be smaller than one unit in the
+    last place of the price. Every sigma across a wide band then reproduces the
+    quote exactly, so there is no implied volatility to report, and returning
+    whichever value the search happened to land on would be fabricating
+    precision that does not exist.
+    """
+    _check_kind(kind)
+    if target_price is None or not math.isfinite(target_price):
+        raise NoImpliedVol("no price to invert")
+    if T <= 0:
+        raise NoImpliedVol("cannot imply a volatility at or after expiry")
+
+    lo, hi = 1e-9, 5.0
+
+    def model(sigma: float) -> float:
+        return price(Inputs(S=S, K=K, T=T, r=r, sigma=sigma, q=q), kind)
+
+    floor, ceiling = model(lo), model(hi)
+
+    # The floor is the no-arbitrage bound: discounted intrinsic against the
+    # forward. A price below it is not a low volatility, it is an arbitrage or
+    # a bad quote, and reporting some tiny sigma instead of saying so would be
+    # inventing a number.
+    if target_price < floor - 1e-10:
+        raise NoImpliedVol(
+            f"price {target_price:.4f} is below the no-arbitrage floor {floor:.4f}; "
+            f"the quote is stale or the inputs do not match the contract"
+        )
+    if target_price > ceiling:
+        raise NoImpliedVol(
+            f"price {target_price:.4f} exceeds what this model can produce even at "
+            f"500% volatility ({ceiling:.4f})"
+        )
+
+    for _ in range(max_iter):
+        if hi - lo < tol:
+            break
+        mid = 0.5 * (lo + hi)
+        if model(mid) < target_price:
+            lo = mid
+        else:
+            hi = mid
+
+    sigma = 0.5 * (lo + hi)
+
+    # Is this answer identified at all? Perturb sigma and see whether the price
+    # actually responds. If it does not, the price is flat in volatility here
+    # and the number the search converged on is an artefact of where the
+    # floating-point steps happen to fall, not a measurement.
+    probe = max(1e-4, 0.01 * sigma)
+    response = model(sigma + probe) - model(max(1e-12, sigma - probe))
+    noise_floor = 8.0 * 2.220446049250313e-16 * max(S, K)
+    if response <= noise_floor:
+        raise NoImpliedVol(
+            f"price {target_price:.6g} carries no volatility information for this "
+            f"contract: moving sigma by {probe:.4g} changes the model price by "
+            f"{response:.3g}, which is below the {noise_floor:.3g} that double "
+            f"precision can resolve at this price level. Any volatility in a wide "
+            f"band reproduces this quote, so there is no implied vol to report."
+        )
+
+    return sigma

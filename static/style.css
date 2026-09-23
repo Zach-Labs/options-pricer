@@ -393,3 +393,30 @@ svg.lattice .val.ex { fill: var(--warn); }
   border-top: 1px solid var(--line-soft);
   line-height: 1.45;
 }
+
+/* -------------------------------------------------------- the option chain */
+
+table.chain { font-family: var(--mono); font-size: 12px; table-layout: auto; }
+table.chain th { font-family: var(--sans); }
+table.chain td { padding: 5px 10px; }
+table.chain tbody tr { cursor: pointer; }
+table.chain tbody tr:hover { background: var(--panel-2); }
+table.chain tr.atm { background: #16202c; }
+table.chain tr.atm td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+table.chain tr.picked { background: #12243a; }
+table.chain tr.picked td:first-child { box-shadow: inset 2px 0 0 var(--good); }
+table.chain .dim { color: var(--ink-faint); }
+table.chain .bad-iv { color: var(--warn); font-size: 11px; }
+table.chain .ours { color: var(--accent); font-weight: 600; }
+
+.chain-compare {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.8;
+}
+.chain-compare b { color: var(--ink); }
