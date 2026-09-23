@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Options Pricer</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="brand">Options Pricer <span>Black-Scholes-Merton and CRR binomial</span></div>
+    <nav role="tablist">
+      <button role="tab" id="tab-btn-model" aria-selected="true" data-tab="model">Model</button>
+      <button role="tab" id="tab-btn-walk" aria-selected="false" data-tab="walk">Walkthrough</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<!-- ===================================================== TAB 1: THE MODEL -->
+<div id="tab-model">
+<div class="layout">
+
+  <aside class="controls">
+    <div class="panel">
+      <h2>Contract</h2>
+
+      <div class="field">
+        <label for="ticker">Ticker <span class="hint">label only, no live data</span></label>
+        <input type="text" id="ticker" value="SPY" autocomplete="off">
+      </div>
+
+      <div class="field">
+        <label>Type</label>
+        <div class="seg" id="seg-kind">
+          <button data-val="call" aria-pressed="true">Call</button>
+          <button data-val="put" aria-pressed="false">Put</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Exercise</label>
+        <div class="seg" id="seg-style">
+          <button data-val="european" aria-pressed="true">European</button>
+          <button data-val="american" aria-pressed="false">American</button>
+        </div>
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <label for="S">Spot <span class="lit">S</span></label>
+          <input type="number" id="S" value="100" step="any">
+        </div>
+        <div class="field">
+          <label for="K">Strike <span class="lit">K</span></label>
+          <input type="number" id="K" value="100" step="any">
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Time to expiry</label>
+        <div class="seg" id="seg-tmode" style="margin-bottom:8px">
+          <button data-val="years" aria-pressed="true">Years</button>
+          <button data-val="date" aria-pressed="false">Date</button>
+        </div>
+        <input type="number" id="T" value="1" step="any" min="0">
+        <input type="date" id="expiry" hidden>
+        <div class="hint" id="t-readout"></div>
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <label for="r">Rate <span class="lit">r</span> <span class="hint">dec</span></label>
+          <input type="number" id="r" value="0.05" step="any">
+        </div>
+        <div class="field">
+          <label for="sigma">Vol <span class="lit">σ</span> <span class="hint">dec</span></label>
+          <input type="number" id="sigma" value="0.20" step="any" min="0">
+        </div>
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <label for="q">Div yield <span class="lit">q</span></label>
+          <input type="number" id="q" value="0" step="any">
+        </div>
+        <div class="field">
+          <label for="steps">Tree steps</label>
+          <input type="number" id="steps" value="500" step="1" min="1" max="5000">
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:14px">
+        <button id="btn-bench" class="seg" style="width:100%;padding:8px;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);border-radius:5px;cursor:pointer;font-size:12px">
+          Load the benchmark case
+        </button>
+        <div class="hint" style="margin-top:6px">S = K = 100, r = 5%, σ = 20%, T = 1</div>
+      </div>
+    </div>
+  </aside>
+
+  <div>
+    <div class="panel">
+      <h2>Premium</h2>
+      <div class="cards" id="cards"></div>
+      <div id="tree-note" class="footnote"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Checks on this contract</h2>
+      <div id="live-checks"></div>
+    </div>
+
+    <div class="panel">
+      <h2>The Greeks</h2>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:160px">Greek</th>
+            <th style="width:130px" class="num">Value</th>
+            <th style="width:240px">Is</th>
+            <th>What it means</th>
+          </tr>
+        </thead>
+        <tbody id="greeks-body"></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <div class="chart-head">
+        <h2>Curves against spot</h2>
+        <select id="curve-pick" style="width:auto">
+          <option value="price">Price</option>
+          <option value="delta">Delta</option>
+          <option value="gamma" selected>Gamma</option>
+          <option value="vega">Vega</option>
+          <option value="theta">Theta</option>
+          <option value="rho">Rho</option>
+          <option value="vanna">Vanna</option>
+          <option value="volga">Volga</option>
+          <option value="charm">Charm</option>
+        </select>
+        <div class="spacer"></div>
+        <div class="legend" id="curve-legend"></div>
+      </div>
+      <svg class="plot" id="curve-plot" viewBox="0 0 900 340" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="footnote">
+        One line per time to expiry, everything else held at the values on the left. Gamma spiking at
+        the money as expiry approaches is the one worth looking at: it is the smoothed version of the
+        kink in the payoff, and it is what you are buying when you are long an option.
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="chart-head">
+        <h2>Lattice convergence</h2>
+        <div class="spacer"></div>
+        <div class="legend">
+          <span><i style="background:#58a6ff"></i>tree price</span>
+          <span><i style="background:#d29922"></i>closed form</span>
+        </div>
+      </div>
+      <svg class="plot" id="conv-plot" viewBox="0 0 900 300" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="footnote">
+        This should be a damped <strong>zigzag</strong>, not a smooth curve. The error is roughly
+        O(1/N), but its sign flips depending on where the strike falls relative to the terminal
+        nodes, and that alternates as N changes. A perfectly smooth line here would mean something
+        is wrong.
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="chart-head">
+        <h2>The tree itself</h2>
+        <select id="lat-steps" style="width:auto">
+          <option>3</option><option>4</option><option selected>5</option>
+          <option>6</option><option>7</option><option>8</option>
+        </select>
+        <div class="spacer"></div>
+        <div class="legend"><span><i style="background:#d29922"></i>exercise early here</span></div>
+      </div>
+      <svg class="lattice" id="lat-plot" viewBox="0 0 900 420" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="footnote" id="lat-note"></div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<!-- ================================================ TAB 2: THE WALKTHROUGH -->
+<div id="tab-walk" hidden>
+<div class="layout">
+
+  <aside>
+    <div class="panel toc">
+      <h2>Contents</h2>
+      <a href="#w-verify">0. Does it work</a>
+      <a href="#w-kink">1. The kink, and why vol is the product</a>
+      <a href="#w-gbm">2. The stock: geometric Brownian motion</a>
+      <a href="#w-ito">3. Ito's lemma and (dW)² = dt</a>
+      <a href="#w-hedge">4. Hedging, and where mu goes</a>
+      <a href="#w-phi">5. The normal CDF, written not imported</a>
+      <a href="#w-d1d2">6. d₁ and d₂</a>
+      <a href="#w-price">7. The price</a>
+      <a href="#w-greeks">8. The greeks</a>
+      <a href="#w-verify-greeks">9. How I know the greeks are right</a>
+      <a href="#w-lattice">10. The lattice, and where q comes from</a>
+      <a href="#w-backward">11. Backward induction</a>
+      <a href="#w-american">12. Early exercise</a>
+      <a href="#w-breaks">13. Where this model breaks</a>
+    </div>
+  </aside>
+
+  <div class="walk">
+
+    <section id="w-verify">
+      <div class="eyebrow">Section 0</div>
+      <h3>Does it work</h3>
+      <p>
+        Every row below is computed live, right now, by the same functions the Model tab calls.
+        Nothing here is a stored result. The targets are the reference values published with the
+        assignment.
+      </p>
+      <div class="panel" id="verify-panel"><span class="footnote">running...</span></div>
+      <p class="footnote">
+        The last row is a positive control and it is the one worth explaining. The row above it
+        asserts that an American call on a non-dividend stock has exactly zero early-exercise
+        premium. That assertion only means something if the routine is capable of finding early
+        exercise when it genuinely exists, otherwise a function that always returned zero would
+        pass. Adding a dividend yield makes early exercise real, and the premium turns positive.
+        So the zero is an economic result, not a broken comparison.
+      </p>
+    </section>
+
+    <section id="w-kink">
+      <div class="eyebrow">Section 1</div>
+      <h3>The kink, and why volatility is the product</h3>
+      <p>
+        A call is the right, not the obligation, to buy at K by time T. "Right, not obligation" is
+        the whole mathematical content of the word option: it is what puts the max( , 0) into the
+        payoff.
+      </p>
+      <div class="eq">call payoff = max(S_T - K, 0)      put payoff = max(K - S_T, 0)</div>
+      <p>
+        Both are continuous but <strong>not differentiable at S_T = K</strong>. That single kink is
+        the source of everything hard and everything profitable here.
+      </p>
+      <p>
+        Both payoffs are also <strong>convex</strong>. Jensen's inequality says E[f(X)] ≥ f(E[X])
+        for convex f, which in English means the expected payoff of an option is at least the payoff
+        of the expected price. Randomness has strictly positive value to the holder.
+      </p>
+      <p>
+        That is the whole reason <strong>more volatility makes an option worth more</strong>, and
+        notice what the argument did not use: any view on direction. Compare a share, whose payoff
+        is the straight line S_T. Linear, so Jensen is an equality, so volatility adds nothing to
+        its expected value. Curvature is the entire difference, and it is why the sanity check "vol
+        up means price up, for calls and puts both" is a statement about the model being coherent
+        rather than about the market.
+      </p>
+    </section>
+
+    <section id="w-gbm">
+      <div class="eyebrow">Section 2</div>
+      <h3>The stock: geometric Brownian motion</h3>
+      <div class="eq">dS = μ·S·dt + σ·S·dW</div>
+      <p>
+        Term by term. <strong>μ·S·dt</strong> is the drift: deterministic, proportional to today's
+        price and to elapsed time. <strong>σ·S·dW</strong> is the diffusion: random, also
+        proportional to today's price. <strong>dW</strong> is the Brownian increment, mean zero,
+        variance dt, independent across non-overlapping intervals.
+      </p>
+      <p>
+        Every term carries S, which is what makes it <em>geometric</em> rather than arithmetic.
+        Divide through and dS/S = μ·dt + σ·dW: the <strong>return</strong> is what has constant
+        statistics, not the dollar move. A $500 stock and a $5 stock carry the same percentage risk.
+      </p>
+      <p>
+        Two consequences fall straight out. S can never go negative, and it can never reach zero
+        from above in finite time, because the shock size shrinks with the price. That is a
+        <strong>feature until it is a catastrophe</strong>: when WTI crude settled at minus $37.63 in
+        April 2020, a lognormal model assigned probability zero to the state that had just occurred,
+        so it could not price it at all. CME moved oil options settlement to Bachelier's arithmetic
+        model, where negative prices are just the left tail, within days. Model choice is not
+        aesthetics.
+      </p>
+    </section>
+
+    <section id="w-ito">
+      <div class="eyebrow">Section 3</div>
+      <h3>Ito's lemma, and the one odd fact (dW)² = dt</h3>
+      <p>
+        This is not an algebraic identity and asserting it is how people lose the thread. It is a
+        statement about quadratic variation, and it is provable in three lines.
+      </p>
+      <p>
+        Over a small interval ΔW ~ Normal(0, Δt), so E[(ΔW)²] = Δt exactly and Var[(ΔW)²] = 2(Δt)².
+        Now sum the squared increments over n = T/Δt steps. The mean of the sum is T. The variance
+        of the sum is 2·T·Δt, which goes to <strong>zero</strong> as Δt goes to zero.
+      </p>
+      <p>
+        So the sum of squared random increments converges to a <strong>non-random</strong> number.
+        The randomness cancels in the square. By the same argument dt·dt = 0 and dt·dW = 0, since
+        those vanish faster.
+      </p>
+      <p>
+        Here is why that matters: a second-order term normally dies in a Taylor expansion. This one
+        <strong>survives at first order in dt</strong>. For a random process the second derivative
+        sits in the drift. Curvature is not a correction term, it is a cash flow.
+      </p>
+      <p>Taylor expand any smooth V(S, t) in two variables and substitute:</p>
+      <div class="eq">dV = V_t·dt + V_S·dS + ½·V_SS·(dS)² + ...
+
+(dS)² = μ²S²(dt)² + 2μσS²·dt·dW + σ²S²(dW)²
+      = σ²S²·dt                      (first two terms die)
+
+dV = (V_t + μ·S·V_S + ½·σ²·S²·V_SS)·dt + σ·S·V_S·dW</div>
+      <p>
+        Ordinary calculus would have given only the first two terms in that bracket. The extra
+        <strong>½σ²S²V_SS</strong> is the Ito correction, and it is pure gamma. That term is where
+        an option owner's money comes from.
+      </p>
+      <p>
+        One payoff for having done it: apply the lemma to f = ln(S) and you get
+        d(ln S) = (μ - σ²/2)dt + σdW, so S_T is lognormal. That minus σ²/2 is not a fudge, it is the
+        Ito correction, and it is why the median path sits below the average path even with the
+        drift unchanged.
+      </p>
+    </section>
+
+    <section id="w-hedge">
+      <div class="eyebrow">Section 4</div>
+      <h3>Hedging, and where mu goes</h3>
+      <p>Build a portfolio: hold the option, short Δ shares against it.</p>
+      <div class="eq">Π = V - Δ·S,   then choose Δ = ∂V/∂S</div>
+      <p>
+        That choice is not arbitrary. V(S) is a curve, Δ is the slope of the tangent line at today's
+        S, and shorting Δ shares subtracts that tangent line. What is left is pure curvature.
+      </p>
+      <p>Now add the pieces and watch the random terms:</p>
+      <div class="eq">from Ito:      dV     = (V_t + μSV_S + ½σ²S²V_SS)dt + σSV_S·dW
+from the stock: -Δ·dS = -V_S·(μS·dt + σS·dW)
+
+                        +σSV_S·dW  and  -σSV_S·dW   cancel exactly
+                        +μSV_S·dt  and  -μSV_S·dt   cancel exactly
+
+dΠ = (V_t + ½σ²S²V_SS)dt        <- no dW anywhere</div>
+      <p>
+        This portfolio's value over the next instant is <strong>deterministic</strong>. Then one
+        economic axiom, the only one used in the whole derivation: an instantaneously riskless
+        portfolio must earn exactly the riskless rate, or you borrow at r, buy it, and print money.
+        Set dΠ = rΠdt and rearrange:
+      </p>
+      <div class="eq">V_t + r·S·V_S + ½·σ²·S²·V_SS - r·V = 0</div>
+      <p>
+        <strong>μ is gone.</strong> The expected return of the stock, the single hardest quantity in
+        finance to estimate and the thing every discretionary investor argues about, is not in the
+        pricing equation. Mechanically it entered twice with opposite signs, once through the
+        option's own drift and once through the shares you are short, and choosing Δ = V_S made the
+        two coefficients identical.
+      </p>
+      <p>
+        Economically: two traders who disagree completely about direction must still agree on this
+        price, or one of them can be arbitraged. The price is enforced by <strong>replication</strong>,
+        not by opinion. And notice what replaced μ: the risk-free rate. That is risk-neutral
+        valuation appearing for the first time. Nobody is claiming the stock drifts at r. The claim
+        is that because the risk is perfectly hedgeable, the price is the same as it would be in a
+        world where it did.
+      </p>
+      <p>
+        What survived is σ, through V_SS. Volatility and curvature are the only things you are
+        actually paid for.
+      </p>
+      <p class="footnote">
+        Worth flagging the assumption doing the heavy lifting: Δ is held fixed over the instant dt
+        and then recomputed, which means continuous, costless rebalancing. That is the first thing
+        to fail in reality, and it is what broke LTCM in 1998 even though the model was fine. See
+        section 13.
+      </p>
+    </section>
+
+    <section id="w-phi">
+      <div class="eyebrow">Section 5</div>
+      <h3>The normal CDF, written rather than imported</h3>
+      <p>
+        Φ(x) is the integral of the normal density, and erf is that same integral rescaled, so this
+        is exact to double precision rather than an approximation. It also means the whole project
+        has no scipy dependency.
+      </p>
+      <div class="code-block" data-symbol="bsm/norm_cdf"></div>
+    </section>
+
+    <section id="w-d1d2">
+      <div class="eyebrow">Section 6</div>
+      <h3>d₁ and d₂</h3>
+      <div class="eq">d₁ = [ln(S/K) + (r - q + σ²/2)·T] / (σ√T)
+d₂ = d₁ - σ√T</div>
+      <p>
+        Read d₂ as the number of standard deviations by which the log-forward exceeds log(K), so
+        <strong>Φ(d₂) is the risk-neutral probability of finishing in the money</strong>. d₁ is the
+        same quantity measured under the measure where the stock itself is the numeraire, which is
+        why Φ(d₁) turns up as delta and is <em>not</em> a probability, despite living between 0 and 1.
+      </p>
+      <div class="code-block" data-symbol="bsm/d1_d2"></div>
+    </section>
+
+    <section id="w-price">
+      <div class="eyebrow">Section 7</div>
+      <h3>The price</h3>
+      <div class="eq">call = S·e^(-qT)·Φ(d₁) - K·e^(-rT)·Φ(d₂)
+put  = K·e^(-rT)·Φ(-d₂) - S·e^(-qT)·Φ(-d₁)</div>
+      <p>
+        Both have the same shape: a discounted expected payoff under the risk-neutral measure. The
+        first term is the present value of receiving the stock in the states where the option is
+        exercised, the second the present value of paying the strike in those same states.
+      </p>
+      <p>
+        The degenerate branch is worth a look rather than a skim. At T = 0, or with σ = 0, the
+        formulas divide by zero, and both cases have exact answers that need no normal distribution
+        at all. Returning those explicitly is the difference between a pricer that handles the edge
+        of its own domain and one that returns NaN and lets it propagate silently into a greek.
+      </p>
+      <div class="code-block" data-symbol="bsm/price"></div>
+      <p>
+        <strong>The debugging check that matters:</strong> put-call parity. C - P = S·e^(-qT) -
+        K·e^(-rT), a pure no-arbitrage identity with no model in it whatsoever, since a long call
+        plus a short put is a synthetic long forward. It must hold to machine precision. If it does
+        not, there is a sign error, and parity is what tells you so.
+      </p>
+      <div class="code-block" data-symbol="bsm/parity_residual"></div>
+    </section>
+
+    <section id="w-greeks">
+      <div class="eyebrow">Section 8</div>
+      <h3>The greeks</h3>
+      <p>
+        Nothing new is introduced here. The greeks are <strong>partial derivatives of the same
+        surface</strong> V(S, t; σ, r), and the only thing being added is economic names. The
+        calculus is the multivariable chain rule and a second-order Taylor expansion.
+      </p>
+      <p>
+        One structural fact worth carrying: gamma, vega, vanna and volga are <strong>identical for a
+        call and a put</strong>. That is not a coincidence to memorise, it follows from parity. The
+        difference C - P is <strong>linear in S and has no σ in it at all</strong>, so any derivative
+        of that difference which is either second order or higher in S, or touches σ even once, is
+        zero. Gamma is the first kind, vega and volga the second, vanna both. The suite asserts it.
+      </p>
+      <p class="footnote">
+        Note the wording: "the second derivatives vanish" is the tidier sentence and it does not
+        cover vega, which is only a first derivative. It is still identical across calls and puts,
+        and the reason is the missing σ rather than the linearity in S.
+      </p>
+      <div class="code-block" data-symbol="bsm/greeks"></div>
+    </section>
+
+    <section id="w-verify-greeks">
+      <div class="eyebrow">Section 9</div>
+      <h3>How I know the greeks are right</h3>
+      <p>
+        This is the part I would want asked. A greek formula typed from memory with one wrong sign
+        still returns numbers that look completely plausible, and no amount of re-reading it
+        reliably catches that. Staring at the formula is not a check.
+      </p>
+      <p>
+        So every analytic greek is asserted equal to a <strong>central finite difference of the
+        price function</strong>, across eight parameter sets and both option kinds. The chain of
+        trust runs: published benchmark verifies price(), price() differentiated numerically
+        verifies greeks().
+      </p>
+      <div class="code-block" data-file="test_greeks"></div>
+      <p>
+        <strong>And then the tests themselves were mutation-tested.</strong> A passing test proves
+        nothing until you have watched it fail, so each formula was deliberately broken one at a
+        time to confirm that a specific test goes red: theta's sign flipped, charm's sign flipped,
+        vanna's sign flipped, volga's indices swapped, gamma's dividend discount dropped, vega's
+        √T removed, d₂ built with a plus, the arbitrage assertion deleted, the risk-neutral
+        probability inverted, d set to something other than 1/u, the per-step discount dropped, the
+        terminal exponent shifted, and the up and down children swapped.
+      </p>
+      <p>
+        All were caught except one, and that one was a real finding rather than a formality: the
+        exercise-boundary test counted flags across every slice <em>including the terminal slice</em>,
+        whose flags are set by a different expression. Killing every interior flag still left the
+        count positive, so the test was green for a reason that had nothing to do with what it
+        claimed to check. It has been narrowed to interior nodes, and the narrowed version kills the
+        mutation.
+      </p>
+    </section>
+
+    <section id="w-lattice">
+      <div class="eyebrow">Section 10</div>
+      <h3>The lattice, and where q comes from</h3>
+      <p>
+        Same economics as the PDE, in finite steps you can actually look at. Over one period the
+        stock does exactly one of two things. Build a portfolio of Δ shares plus B in bonds and
+        demand it match the option in <strong>both</strong> states:
+      </p>
+      <div class="eq">Δ·u·S + B·e^(r·dt) = V_u
+Δ·d·S + B·e^(r·dt) = V_d
+
+subtract:  Δ = (V_u - V_d) / (S·(u - d))       <- this is delta, discretely
+solve, substitute, and it collapses to:
+
+V = e^(-r·dt)·[ q·V_u + (1 - q)·V_d ],    q = (e^((r-q_div)·dt) - d) / (u - d)</div>
+      <p>
+        <strong>q was never assumed.</strong> Nobody estimated a probability and nobody expressed a
+        view. It fell out of solving two linear equations in two unknowns. It happens to behave like
+        a probability, and it is the risk-neutral measure in its simplest possible form: check that
+        q·u + (1-q)·d = e^((r-q_div)·dt), so under q the stock grows at exactly the risk-free rate
+        net of the dividend yield. Not because it does, but because that is the measure under which
+        hedged prices are consistent. With no dividend that is just the risk-free rate, which is the
+        case worth carrying in your head, but the dividend term is in the code and it belongs here
+        too.
+      </p>
+      <p>
+        The real-world probability of an up move appears nowhere, which is the same phenomenon as μ
+        vanishing from the PDE, seen a second time in a much simpler setting.
+      </p>
+      <p>
+        <strong>q lies strictly in (0,1) if and only if d &lt; e^(r·dt) &lt; u.</strong> That is not
+        a technical footnote, it is no-arbitrage written in three symbols: outside it the stock
+        either dominates the bond in both states or is dominated in both, and a static arbitrage
+        exists. So it is asserted in code before any pricing happens, and the error message says
+        what to change.
+      </p>
+      <p>
+        On u and d: CRR uses u = e^(σ√dt) and d = 1/u. The √dt is the same square-root-of-time
+        scaling as dW and it makes the tree's variance per step match σ²dt to leading order. The
+        d = 1/u choice makes the tree <strong>recombine</strong>, so n steps give n+1 terminal nodes
+        instead of 2ⁿ. That single choice is the difference between a program that runs and one
+        that does not.
+      </p>
+      <div class="code-block" data-symbol="binomial/build_lattice"></div>
+    </section>
+
+    <section id="w-backward">
+      <div class="eyebrow">Section 11</div>
+      <h3>Backward induction</h3>
+      <p>
+        Start at expiry, where the value is known exactly because it is just the payoff. Step
+        backwards. At each node the continuation value is the discounted risk-neutral expectation of
+        the two children.
+      </p>
+      <div class="code-block" data-symbol="binomial/price_tree"></div>
+      <p>
+        The delta can also be read straight off the first branching, the replication way rather than
+        by bumping the input. This is not a finite difference bolted on afterwards, it is literally
+        the share count the replicating portfolio holds, which is where the continuous-time delta
+        came from in the first place. That it lands on Φ(d₁) is the discrete and continuous
+        arguments agreeing.
+      </p>
+      <div class="code-block" data-symbol="binomial/tree_delta"></div>
+    </section>
+
+    <section id="w-american">
+      <div class="eyebrow">Section 12</div>
+      <h3>Early exercise</h3>
+      <p>
+        Exactly one line changes: at each node, take max(intrinsic, continuation). That single
+        comparison converts the whole thing from European to American, and it is the optimal
+        stopping problem solved by dynamic programming. The exercise boundary is never specified
+        anywhere. It <strong>emerges</strong> from a few thousand comparisons.
+      </p>
+      <p>
+        <strong>Merton's theorem</strong> is the unit test. An American call on a non-dividend stock
+        is never exercised early, and the proof needs no model at all. Exercising gives exactly
+        S - K. Selling gives at least S - K·e^(-rT). Since r &gt; 0 and T &gt; 0, K·e^(-rT) &lt; K,
+        so selling <em>strictly</em> beats exercising, always. Two separate reasons underneath:
+        exercising hands over the strike sooner than necessary and forfeits the interest on it, and
+        it throws away the protection if the stock later falls back below K.
+      </p>
+      <p>
+        Where it does bite is <strong>puts</strong>, because exercising hands you K in cash now and
+        that cash earns r. Deep in the money the remaining optionality is nearly worthless while the
+        interest is real. That is also why the sanity check works: as r goes to zero the entire
+        benefit disappears and the American put collapses onto the European one.
+      </p>
+      <div class="code-block" data-symbol="binomial/early_exercise_premium"></div>
+      <p class="footnote">
+        Note the choice to difference on a single lattice rather than against the closed form. The
+        discretisation error is common to both legs and cancels, so what is left is the
+        early-exercise value rather than that value plus a few basis points of lattice noise.
+      </p>
+    </section>
+
+    <section id="w-breaks">
+      <div class="eyebrow">Section 13</div>
+      <h3>Where this model breaks</h3>
+      <p>
+        Worth being straight about, because the interesting question is never whether the model is
+        wrong. It is.
+      </p>
+      <p>
+        <strong>1987.</strong> The S&amp;P fell about 20.5% in a session, a log return of about
+        -0.229. At 1.26% daily volatility, which is 20% annualised, that is roughly an 18 sigma
+        move. Under a normal distribution P(Z &lt; -18) is small enough that you would expect to
+        wait vastly longer than the age of the universe. The model does not merely underestimate
+        that event, it assigns it probability zero for practical purposes. The failure is in the
+        <strong>tails</strong>: lognormality is a claim about tail thinness, and real returns have
+        fat tails, jumps, and volatility that clusters. The centre of the distribution was fine, and
+        the centre is not what kills you.
+      </p>
+      <p>
+        The market's response never went away. Before 1987 implied volatilities across strikes were
+        roughly flat, which is what you would expect if everyone believed the model. Since then
+        out-of-the-money puts trade at permanently higher implied vols. Read that carefully: it does
+        <em>not</em> mean traders think vol is genuinely higher at low strikes. It means the model is
+        wrong and they are using its single free parameter to force the formula to output the price
+        they actually want to charge. Every strike carries its own σ.
+      </p>
+      <p>
+        <strong>1998.</strong> LTCM, with Merton and Scholes on the board, is a different failure and
+        the distinction matters. 1987 was the model's distribution being wrong. 1998 was the model
+        being fine while the assumptions <em>around</em> it, continuous trading, infinite liquidity,
+        no financing constraints, were wrong. Both are the same line from section 4 failing: you
+        cannot always rebalance the hedge, and you least can exactly when you most need to.
+      </p>
+      <p>
+        <strong>What this means for the pricer.</strong> It is correct inside its assumptions and the
+        assumptions are false. That is not a reason to distrust the output, it is a reason to know
+        which number is doing what. On a desk today nobody feeds σ in to get a price. They observe
+        the price and solve for the σ that reproduces it, and that number, the implied volatility,
+        is the real object. BSM survives as an <strong>interface</strong>, a shared convention for
+        quoting in vol and reporting risk, rather than as a belief about how stocks move. A wrong
+        model everyone agrees on beats a right model nobody shares.
+      </p>
+    </section>
+
+  </div>
+</div>
+</div>
+
+</main>
+
+<!-- The greek copy comes from pricing/glossary.py so the model tab and the
+     walkthrough can never drift apart on what a greek means. -->
+<script>const GREEK_META = {{ greeks|tojson }};</script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
