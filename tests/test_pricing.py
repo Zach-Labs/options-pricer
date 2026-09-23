@@ -256,9 +256,15 @@ def test_lattice_detail_marks_an_exercise_boundary_on_an_american_put() -> None:
     from pricing.binomial import lattice_detail
 
     p = Inputs(S=60, K=100, T=1.0, r=0.08, sigma=0.20)
-    detail = lattice_detail(p, "put", steps=6, american=True)
-    flagged = sum(sum(s["exercise"]) for s in detail["slices"])
-    assert flagged > 0
 
-    euro = lattice_detail(p, "put", steps=6, american=False)
-    assert sum(sum(s["exercise"]) for s in euro["slices"]) == 0
+    # INTERIOR slices only. The terminal slice has its flags set by a separate
+    # expression (at expiry, "exercise" just means "finished in the money"), so
+    # counting it here would let the whole backward-induction boundary be dead
+    # while the assertion still passed. That exact mutation survived until this
+    # test was narrowed.
+    def interior_flags(steps: int, american: bool) -> int:
+        d = lattice_detail(p, "put", steps=steps, american=american)
+        return sum(sum(s["exercise"]) for s in d["slices"][:-1])
+
+    assert interior_flags(6, american=True) > 0
+    assert interior_flags(6, american=False) == 0
