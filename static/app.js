@@ -177,65 +177,6 @@ function renderCards(d) {
   }
 }
 
-function renderLiveChecks(d) {
-  const rows = [];
-  // Relative, not absolute: floating-point error scales with price, so a fixed
-  // threshold produces a false failure on a high-priced underlying.
-  const parityOK = Math.abs(d.parity_relative_residual) < 1e-12;
-  rows.push({
-    ok: parityOK,
-    label: "Put-call parity",
-    got: fmt(d.parity_residual, 12),
-    target: "= 0",
-    note: `C - P - (S·e^(-qT) - K·e^(-rT)). Call ${fmt(d.call_price, 4)}, put ${fmt(d.put_price, 4)}. A pure no-arbitrage identity, so a non-zero residual means a sign error, not an approximation.`,
-  });
-
-  if (d.tree && !d.tree.error) {
-    const ee = d.tree.early_exercise_premium;
-    if (state.kind === "call" && d.inputs.q === 0) {
-      rows.push({
-        ok: Math.abs(ee) < 1e-10,
-        label: "Merton: American call = European call, no dividend",
-        got: fmt(ee, 12),
-        target: "exactly 0",
-        note: "Selling strictly beats exercising when r > 0, so early exercise is never optimal. Set a dividend yield above and watch this turn positive.",
-      });
-    } else {
-      rows.push({
-        ok: ee >= -1e-12,
-        label: "Early-exercise premium is never negative",
-        got: fmt(ee, 8),
-        target: "≥ 0",
-        note: "The right to exercise early cannot be worth less than nothing, since you can always decline to use it.",
-      });
-    }
-    rows.push({
-      ok: Math.abs(d.tree.tree_vs_closed_form) < 0.05,
-      label: "Lattice agrees with the closed form",
-      got: fmt(d.tree.tree_vs_closed_form, 8),
-      target: "→ 0 as steps grow",
-      note: "Raise the step count on the left and watch this shrink roughly like 1/N.",
-    });
-  }
-
-  rows.push({
-    ok: d.closed_form >= d.intrinsic - 1e-9,
-    label: "Price is at least intrinsic value",
-    got: fmt(d.closed_form - d.intrinsic, 8),
-    target: "≥ 0",
-    note: "Otherwise you could buy the option, exercise immediately and book a riskless profit.",
-  });
-
-  $("live-checks").innerHTML = rows.map((r) =>
-    `<div class="check">
-       <span class="dot ${r.ok ? "ok" : "no"}"></span>
-       <span class="label">${r.label}</span>
-       <span class="got">${r.got}</span>
-       <span class="target">${r.target}</span>
-       <span class="note">${r.note}</span>
-     </div>`).join("");
-}
-
 function renderGreeks(d) {
   const body = $("greeks-body");
   body.innerHTML = GREEK_META.map((g) => {
@@ -525,7 +466,6 @@ async function refreshAll() {
   try {
     const d = await post("/api/price", payload());
     renderCards(d);
-    renderLiveChecks(d);
     renderGreeks(d);
     $("t-readout").textContent =
       state.tmode === "date"
