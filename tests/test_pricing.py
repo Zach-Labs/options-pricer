@@ -224,3 +224,41 @@ def test_tree_converges_toward_the_closed_form_as_steps_grow(steps: int) -> None
     exact = price(BENCH, "call")
     err = abs(price_tree(BENCH, "call", steps=steps) - exact)
     assert err < 5.0 / steps
+
+
+# ------------------------------------------------- the small-tree display path
+
+
+@pytest.mark.parametrize("american", [False, True])
+@pytest.mark.parametrize("kind", ["call", "put"])
+def test_lattice_detail_root_matches_the_production_pricer(kind: str, american: bool) -> None:
+    """The node-by-node dump must agree with price_tree at the root.
+
+    lattice_detail exists to draw a small tree in the UI, so it re-implements
+    the backward induction in a form that keeps every slice. Re-implementation
+    is exactly where a display path silently drifts from the pricer it is
+    supposed to be showing, so the two are pinned together here.
+    """
+    from pricing.binomial import lattice_detail
+
+    p = Inputs(S=100, K=105, T=1.0, r=0.05, sigma=0.30)
+    detail = lattice_detail(p, kind, steps=6, american=american)
+    root = detail["slices"][0]["values"][0]
+    assert root == pytest.approx(price_tree(p, kind, steps=6, american=american), abs=1e-12)
+
+
+def test_lattice_detail_marks_an_exercise_boundary_on_an_american_put() -> None:
+    """Deep in the money, an American put holder exercises, and the dump says so.
+
+    Without this, the exercise flags could be all-False forever and every other
+    assertion would still pass.
+    """
+    from pricing.binomial import lattice_detail
+
+    p = Inputs(S=60, K=100, T=1.0, r=0.08, sigma=0.20)
+    detail = lattice_detail(p, "put", steps=6, american=True)
+    flagged = sum(sum(s["exercise"]) for s in detail["slices"])
+    assert flagged > 0
+
+    euro = lattice_detail(p, "put", steps=6, american=False)
+    assert sum(sum(s["exercise"]) for s in euro["slices"]) == 0
