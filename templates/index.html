@@ -31,7 +31,7 @@
         <input type="text" id="ticker" value="AAPL" autocomplete="off" spellcheck="false">
         <button id="btn-fetch" type="button">Fetch</button>
       </div>
-      <div class="hint" id="quote-status">Pulls spot, volatility and dividend yield.</div>
+      <div class="hint" id="quote-status">Fills spot, volatility and dividend.</div>
     </div>
 
     <div class="field">
@@ -83,6 +83,12 @@
       </div>
     </div>
 
+    <div class="field">
+      <label for="market-price">Market price <span class="hint">solves for vol</span></label>
+      <input type="number" id="market-price" step="any" min="0" placeholder="type a quote">
+      <div class="hint" id="implied-status"></div>
+    </div>
+
     <div class="row2">
       <div class="field">
         <label for="q">Dividend <span class="lit">q</span></label>
@@ -106,31 +112,6 @@
       <div class="price-caption" id="price-caption"></div>
       <div class="stats" id="stats"></div>
       <div id="tree-note" class="caption"></div>
-    </section>
-
-    <section class="block" id="chain-section" hidden>
-      <div class="section-head">
-        <div style="flex:1">
-          <h2 class="section">Live option chain</h2>
-        </div>
-        <select id="chain-expiry"></select>
-        <div class="legend"><span id="chain-summary"></span></div>
-      </div>
-      <div class="section-rule"></div>
-      <div class="table-scroll" id="chain-body"></div>
-      <div class="caption">
-        Implied volatility on every row is computed by <strong>inverting this pricer</strong>
-        against that contract&#8217;s traded price. The feed&#8217;s own implied-vol field sits
-        beside it for comparison and is never used: the two routinely disagree, because that
-        field is computed on the provider&#8217;s own rate, dividend and price assumptions rather
-        than the ones on the left, and it has been observed returning values near zero outright.
-        Ours is reproducible from the inputs shown. Click a row to load that contract.
-        <strong>Read the volume column before you read the vol:</strong> these are last traded
-        prices, so a strike that traded five contracts hours ago is stale and its implied vol is
-        noise. The smooth part near the money is the signal, and what you should see there is
-        implied vol falling as the strike rises. That is the volatility skew, and it is not in
-        Black&#8211;Scholes, which assumes one volatility for every strike.
-      </div>
     </section>
 
     <section class="block">
@@ -171,10 +152,8 @@
       <div class="section-rule"></div>
       <svg class="plot" id="curve-plot" viewBox="0 0 900 330" preserveAspectRatio="xMidYMid meet"></svg>
       <div class="caption">
-        One line per time to expiry, everything else held at the values on the left. Gamma
-        spiking at the money as expiry approaches is the one worth looking at: it is the
-        smoothed version of the kink in the payoff, and it is what you are buying when you are
-        long an option.
+        One line per time to expiry. Gamma spikes at the money as expiry approaches: that is the
+        smoothed version of the kink in the payoff, and it is what you are buying.
       </div>
     </section>
 
@@ -191,10 +170,9 @@
       <div class="section-rule"></div>
       <svg class="plot" id="conv-plot" viewBox="0 0 900 300" preserveAspectRatio="xMidYMid meet"></svg>
       <div class="caption">
-        Tree price against step count. This should be a damped <strong>zigzag</strong>, not a
-        smooth curve: the error is roughly O(1/N), but its sign flips depending on where the
-        strike falls relative to the terminal nodes, and that alternates as N changes. A
-        perfectly smooth line here would mean something is wrong.
+        A damped <strong>zigzag</strong>, not a smooth curve. The error is roughly O(1/N) but its
+        sign flips with where the strike falls between terminal nodes. A smooth line would mean
+        something is wrong.
       </div>
     </section>
 
