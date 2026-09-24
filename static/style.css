@@ -540,3 +540,33 @@ svg.lattice .val.ex { fill: var(--flag); }
 }
 .badge.ok { color: var(--pos); border-color: #bcd9c8; background: #eef7f1; }
 .badge.no { color: var(--neg); border-color: #e4bdba; background: #fbf0ef; }
+
+/* ------------------------------------------------------------- the surface */
+
+.surface-grid { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 28px; align-items: start; }
+@media (max-width: 900px) { .surface-grid { grid-template-columns: minmax(0, 1fr); } }
+
+#surface-input {
+  width: 100%;
+  min-height: 210px;
+  /* A pasted grid is columnar. Wrapping it destroys the alignment that makes
+     it readable, so rows stay on one line and the box scrolls sideways. */
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  tab-size: 8;
+  background: var(--paper-sunk);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 12px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink);
+  resize: vertical;
+}
+#surface-input:focus { outline: none; border-color: var(--accent); }
+#surface-status { margin: 8px 0 10px; }
+#surface-status.ok { color: var(--pos); }
+#surface-status.bad { color: var(--neg); }

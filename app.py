@@ -19,12 +19,13 @@ from __future__ import annotations
 
 import datetime as dt
 import inspect
+import math
 import pathlib
 import traceback
 
 from flask import Flask, jsonify, render_template, request
 
-from pricing import binomial, bsm, market
+from pricing import binomial, bsm, market, surface
 from pricing.glossary import GREEKS
 
 app = Flask(__name__)
@@ -299,6 +300,60 @@ def api_quote(ticker: str):
         return jsonify(market.fetch_quote(ticker).to_dict())
     except market.MarketDataUnavailable as exc:
         return jsonify({"error": str(exc)}), 503
+
+
+@app.post("/api/sample-grid")
+def api_sample_grid():
+    """A worked example grid, priced off the contract currently loaded.
+
+    Hand-written sample numbers do not survive a change of spot: quotes that
+    look reasonable against a 100 underlying fall below intrinsic against a 770
+    one, and half the grid then refuses to invert. Generating it from the model
+    means the sample always parses, and it carries a deliberate skew so the
+    picture it draws is the one the section is about.
+    """
+    payload = request.get_json(force=True)
+    p = parse_inputs(payload)
+    kind = payload.get("kind", "call")
+
+    expiries = [0.08, 0.25, 0.5, 1.0]
+    strikes = [round(p.S * m / 5) * 5 for m in (0.88, 0.94, 1.0, 1.06, 1.12)]
+
+    lines = ["\t" + "\t".join(f"{t:g}" for t in expiries)]
+    for K in strikes:
+        cells = []
+        for T in expiries:
+            # A downward skew in strike, decaying with maturity, which is the
+            # shape equity surfaces actually have.
+            moneyness = math.log(K / p.S)
+            sigma = 0.20 - 0.35 * moneyness / (1.0 + 2.0 * T) + 0.02 * T
+            sigma = max(0.05, sigma)
+            cells.append(f"{bsm.price(bsm.Inputs(S=p.S, K=K, T=T, r=p.r, sigma=sigma, q=p.q), kind):.4f}")
+        lines.append(f"{K:g}\t" + "\t".join(cells))
+
+    return jsonify({"grid": "\n".join(lines)})
+
+
+@app.post("/api/surface")
+def api_surface():
+    """Build a volatility surface from a pasted grid of quotes.
+
+    Deliberately not fed from a data feed. Marks come from wherever the marks
+    are good, a terminal or a spreadsheet, and this end does the inversion.
+    That split is the whole design: the weak link in the old chain browser was
+    the free feed's stale last-traded prices, not the maths.
+    """
+    payload = request.get_json(force=True)
+    p = parse_inputs(payload)
+    try:
+        return jsonify(surface.build_surface(
+            payload.get("grid", ""),
+            S=p.S, r=p.r, q=p.q,
+            kind=payload.get("kind", "call"),
+            cells_are=payload.get("cells_are", "price"),
+        ))
+    except surface.SurfaceError as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 @app.get("/api/symbol/<module>/<symbol>")

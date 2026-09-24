@@ -16,6 +16,8 @@ const state = {
   style: "european",
   tmode: "years",
   curve: "gamma",
+  cells: "price",
+  surfaceView: "smile",
   latSteps: 5,
 };
 
@@ -422,6 +424,90 @@ async function solveImplied() {
   }
 }
 
+/* --------------------------------------------------------- the vol surface */
+
+let surfaceData = null;
+
+async function buildSurface() {
+  const text = $("surface-input").value.trim();
+  const status = $("surface-status");
+  if (!text) {
+    surfaceData = null;
+    $("surface-plot").innerHTML = "";
+    $("surface-legend").innerHTML = "";
+    status.textContent = "";
+    status.className = "hint";
+    return;
+  }
+
+  const body = payload();
+  body.grid = text;
+  body.cells_are = state.cells;
+
+  try {
+    surfaceData = await post("/api/surface", body);
+    const d = surfaceData;
+    status.className = "hint ok";
+    status.textContent =
+      `${d.inverted} of ${d.inverted + d.failed} cells` +
+      (d.cells_are === "vol" ? " read as vols" : " inverted") +
+      ` · ${d.expiries.length} expiries · ${d.strikes.length} strikes`;
+    renderSurface();
+  } catch (e) {
+    surfaceData = null;
+    $("surface-plot").innerHTML = "";
+    $("surface-legend").innerHTML = "";
+    status.className = "hint bad";
+    status.textContent = e.message;
+  }
+}
+
+function renderSurface() {
+  const d = surfaceData;
+  if (!d) return;
+  const good = d.points.filter((p) => p.implied_vol !== null);
+  if (!good.length) { $("surface-plot").innerHTML = ""; return; }
+
+  let series;
+  let opts;
+
+  if (state.surfaceView === "smile") {
+    // One line per expiry, vol against strike. This is the skew.
+    series = d.expiries.map((label, i) => {
+      const pts = good
+        .filter((p) => p.expiry === label)
+        .sort((a, b) => a.strike - b.strike)
+        .map((p) => [p.strike, p.implied_vol * 100]);
+      return { label, color: PALETTE[i % PALETTE.length], points: pts };
+    }).filter((s) => s.points.length > 1);
+    opts = { xlabel: "strike", ylabel: "implied vol %", markerX: d.spot, markerLabel: `spot ${fmt(d.spot, 2)}` };
+  } else {
+    // One line per strike, vol against time. This is the term structure.
+    series = d.strikes.map((k, i) => {
+      const pts = good
+        .filter((p) => p.strike === k)
+        .sort((a, b) => a.T - b.T)
+        .map((p) => [p.T, p.implied_vol * 100]);
+      return { label: String(k), color: PALETTE[i % PALETTE.length], points: pts };
+    }).filter((s) => s.points.length > 1);
+    opts = { xlabel: "years to expiry", ylabel: "implied vol %", xdp: 2 };
+  }
+
+  plot($("surface-plot"), series, opts);
+  $("surface-legend").innerHTML = series
+    .map((s) => `<span><i style="background:${s.color}"></i>${s.label}</span>`)
+    .join("");
+
+  const failed = d.points.filter((p) => p.implied_vol === null);
+  const caption = $("surface-caption");
+  const base = state.surfaceView === "smile"
+    ? "Implied vol falling as strike rises is the <strong>skew</strong>. Black-Scholes cannot express it: it has one sigma per underlying, not one per strike."
+    : "Vol against time at a fixed strike is the <strong>term structure</strong>. It usually slopes up, and inverts when a known event sits inside the near expiry.";
+  caption.innerHTML = base + (failed.length
+    ? ` <span class="flagged">${failed.length} cell${failed.length === 1 ? "" : "s"} could not be inverted and ${failed.length === 1 ? "is" : "are"} not plotted: ${failed[0].error}</span>`
+    : "");
+}
+
 /* -------------------------------------------------- render: the walkthrough */
 
 /* Single-pass tokenizer.
@@ -532,12 +618,13 @@ async function refreshAll() {
     await refreshCurves();
     await refreshConvergence();
     await refreshLattice();
+    if (surfaceData) await buildSurface();
   } catch (e) {
     $("tree-note").innerHTML = `<div class="err">${e.message}</div>`;
   }
 }
 
-function wireSegment(id, key, after) {
+function wireSegment(id, key, after, refresh = true) {
   const box = $(id);
   box.addEventListener("click", (ev) => {
     const btn = ev.target.closest("button");
@@ -546,7 +633,7 @@ function wireSegment(id, key, after) {
       b.setAttribute("aria-pressed", String(b === btn)));
     state[key] = btn.dataset.val;
     if (after) after();
-    scheduleRefresh();
+    if (refresh) scheduleRefresh();
   });
 }
 
@@ -577,6 +664,29 @@ function init() {
   });
 
   $("btn-fetch").addEventListener("click", fetchQuote);
+
+  let surfacePending = null;
+  $("surface-input").addEventListener("input", () => {
+    clearTimeout(surfacePending);
+    surfacePending = setTimeout(buildSurface, 400);
+  });
+  $("btn-surface-demo").addEventListener("click", async () => {
+    // Priced off the contract on screen, so it always inverts cleanly. A
+    // hard-coded grid goes below intrinsic the moment the spot changes.
+    try {
+      const d = await post("/api/sample-grid", payload());
+      $("surface-input").value = d.grid;
+      $("seg-cells").querySelectorAll("button").forEach((b) =>
+        b.setAttribute("aria-pressed", String(b.dataset.val === "price")));
+      state.cells = "price";
+      await buildSurface();
+    } catch (e) {
+      $("surface-status").className = "hint bad";
+      $("surface-status").textContent = e.message;
+    }
+  });
+  wireSegment("seg-cells", "cells", buildSurface, false);
+  wireSegment("seg-surface-view", "surfaceView", renderSurface, false);
   $("market-price").addEventListener("input", () => {
     clearTimeout(impliedPending);
     impliedPending = setTimeout(solveImplied, 300);
