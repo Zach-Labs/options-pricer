@@ -115,44 +115,6 @@
     </section>
 
     <section class="block">
-      <div class="section-head">
-        <div style="flex:1">
-          <h2 class="section">Volatility surface</h2>
-        </div>
-        <div class="seg" id="seg-cells">
-          <button data-val="price" aria-pressed="true">Cells are prices</button>
-          <button data-val="vol" aria-pressed="false">Cells are vols</button>
-        </div>
-        <div class="seg" id="seg-surface-view">
-          <button data-val="smile" aria-pressed="true">By strike</button>
-          <button data-val="term" aria-pressed="false">By expiry</button>
-        </div>
-      </div>
-      <div class="section-rule"></div>
-
-      <div class="surface-grid">
-        <div>
-          <textarea id="surface-input" spellcheck="false" placeholder="Paste a grid. Rows are strikes, columns are expiries.
-
-&#9;0.08&#9;0.25&#9;0.5
-950&#9;12.40&#9;21.00&#9;30.10
-1000&#9;24.20&#9;35.50&#9;48.00
-
-Expiries can be year fractions or dates (2026-12-18).
-Tabs, commas or spaces. Blank cells are fine."></textarea>
-          <div class="hint" id="surface-status"></div>
-          <button type="button" class="link-btn" id="btn-surface-demo">Load a sample grid</button>
-        </div>
-        <svg class="plot" id="surface-plot" viewBox="0 0 900 340" preserveAspectRatio="xMidYMid meet"></svg>
-      </div>
-      <div class="legend" id="surface-legend" style="margin-top:12px"></div>
-      <div class="caption" id="surface-caption">
-        Implied vol falling as strike rises is the <strong>skew</strong>. Black-Scholes cannot
-        express it: it has one sigma per underlying, not one per strike.
-      </div>
-    </section>
-
-    <section class="block">
       <h2 class="section">The Greeks</h2>
       <div class="section-rule"></div>
       <div class="table-scroll">
@@ -228,6 +190,48 @@ Tabs, commas or spaces. Blank cells are fine."></textarea>
       <div class="section-rule"></div>
       <svg class="lattice" id="lat-plot" viewBox="0 0 900 400" preserveAspectRatio="xMidYMid meet"></svg>
       <div class="caption" id="lat-note"></div>
+    </section>
+
+    <section class="block">
+      <div class="section-head">
+        <div style="flex:1">
+          <h2 class="section">Volatility surface</h2>
+        </div>
+        <div class="seg" id="seg-cells">
+          <button data-val="price" aria-pressed="true">Cells are prices</button>
+          <button data-val="vol" aria-pressed="false">Cells are vols</button>
+        </div>
+        <div class="seg" id="seg-surface-view">
+          <button data-val="surface" aria-pressed="true">Surface</button>
+          <button data-val="smile" aria-pressed="false">By strike</button>
+          <button data-val="term" aria-pressed="false">By expiry</button>
+        </div>
+      </div>
+      <div class="section-rule"></div>
+
+      <div class="surface-grid">
+        <div class="surface-entry">
+          <textarea id="surface-input" spellcheck="false" placeholder="Paste a grid. Rows are strikes, columns are expiries.
+
+&#9;0.08&#9;0.25&#9;0.5
+950&#9;12.40&#9;21.00&#9;30.10
+1000&#9;24.20&#9;35.50&#9;48.00
+
+Expiries can be year fractions or dates (2026-12-18).
+Tabs, commas or spaces. Blank cells are fine."></textarea>
+          <div>
+            <div class="hint" id="surface-status"></div>
+            <button type="button" class="link-btn" id="btn-surface-demo" style="margin-top:10px">Load a sample grid</button>
+            <div class="legend" id="surface-legend" style="margin-top:14px"></div>
+          </div>
+        </div>
+        <svg class="plot" id="surface-plot" viewBox="0 0 900 460" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="hint mono" id="surface-axes" style="text-align:center"></div>
+      </div>
+      <div class="caption" id="surface-caption">
+        Implied vol falling as strike rises is the <strong>skew</strong>. Black-Scholes cannot
+        express it: it has one sigma per underlying, not one per strike.
+      </div>
     </section>
   </div>
 

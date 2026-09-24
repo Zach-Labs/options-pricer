@@ -17,7 +17,7 @@ const state = {
   tmode: "years",
   curve: "gamma",
   cells: "price",
-  surfaceView: "smile",
+  surfaceView: "surface",
   latSteps: 5,
 };
 
@@ -462,11 +462,225 @@ async function buildSurface() {
   }
 }
 
+/* ---------------------------------------------------- the 3D surface render */
+
+/* Hand-rolled axonometric projection. No charting library, for the same reason
+ * the other plots are hand-drawn: a picture you wrote is a picture you can
+ * explain, and this one is about 120 lines of trigonometry.
+ *
+ * The mesh is drawn with the painter's algorithm, which is the whole trick:
+ * sort every quad by depth and draw the far ones first, so near ones paint
+ * over them. There is no z-buffer and none is needed for a surface that is a
+ * height field, because a height field cannot fold back on itself. */
+
+const surfaceCam = { yaw: -0.62, pitch: 0.52 };
+
+/* Viridis, sampled at five anchors and interpolated between them. Chosen over
+ * a prettier gradient because it is perceptually uniform: equal steps in
+ * volatility are equal steps in apparent colour, so the picture does not
+ * invent ridges where the data is flat. It also survives being printed in
+ * greyscale and is readable with the common colour deficiencies. */
+const VIRIDIS = [
+  [68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37],
+];
+
+function viridis(t) {
+  t = Math.max(0, Math.min(1, t));
+  const x = t * (VIRIDIS.length - 1);
+  const i = Math.min(VIRIDIS.length - 2, Math.floor(x));
+  const f = x - i;
+  const c = VIRIDIS[i].map((v, k) => Math.round(v + f * (VIRIDIS[i + 1][k] - v)));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+
+/* Project a normalised (x, y, z) to UNSCALED screen coordinates, plus the
+ * depth so the caller can sort by it. Scaling is applied separately, because
+ * the right scale depends on the rotation and cannot be known until every
+ * point has been projected. */
+function projectRaw(x, y, z, cam) {
+  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+
+  const X = x * cy - y * sy;
+  const Y = x * sy + y * cy;
+
+  return { rx: X, ry: (Y * sp - z * cp) * 0.9, depth: Y * cp + z * sp };
+}
+
+/* Fit whatever was projected into the viewport with a margin.
+ *
+ * A fixed scale works at one camera angle and clips at others: rotating
+ * towards edge-on makes the figure taller on screen, and at a shallow pitch
+ * the surface ran off the top of the canvas. Measuring the projected extent
+ * and solving for the scale means no rotation can clip, which matters because
+ * the thing is draggable. */
+function fitter(pointsRaw, W, H, margin = 54) {
+  const xs = pointsRaw.map((p) => p.rx), ys = pointsRaw.map((p) => p.ry);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const scale = Math.min((W - 2 * margin) / (x1 - x0 || 1), (H - 2 * margin) / (y1 - y0 || 1));
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  return (p) => ({
+    sx: W / 2 + (p.rx - cx) * scale,
+    sy: H / 2 + (p.ry - cy) * scale,
+    depth: p.depth,
+  });
+}
+
+function renderSurface3D(d) {
+  const svg = $("surface-plot");
+  svg.innerHTML = "";
+  const W = 900, H = svg.viewBox.baseVal.height || 460;
+
+  const good = d.points.filter((p) => p.implied_vol !== null);
+  if (good.length < 4) {
+    svg.appendChild(el("text", {
+      class: "tick", x: W / 2, y: H / 2, "text-anchor": "middle",
+    }, "need at least a 2x2 block of quotes to draw a surface"));
+    return;
+  }
+
+  const strikes = [...new Set(good.map((p) => p.strike))].sort((a, b) => a - b);
+  const times = [...new Set(good.map((p) => p.T))].sort((a, b) => a - b);
+
+  // Look-up so a ragged grid is handled: a quad is only drawn when all four
+  // of its corners actually have a quote.
+  const at = new Map(good.map((p) => [`${p.strike}|${p.T}`, p.implied_vol]));
+  const vols = good.map((p) => p.implied_vol);
+  const vlo = Math.min(...vols), vhi = Math.max(...vols);
+  const span = vhi - vlo || 1;
+
+  const nx = (k) => (strikes.length === 1 ? 0 : (strikes.indexOf(k) / (strikes.length - 1)) * 2 - 1);
+  const ny = (t) => (times.length === 1 ? 0 : (times.indexOf(t) / (times.length - 1)) * 2 - 1);
+  const nz = (v) => ((v - vlo) / span) * 1.1 - 0.55;
+
+  // Pass one: project every point that will be drawn, so the fit accounts for
+  // the mesh AND the floor rather than assuming a bound.
+  const allRaw = [];
+  for (const [x, y] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    allRaw.push(projectRaw(x, y, -0.55, surfaceCam));
+  }
+  for (const p of good) allRaw.push(projectRaw(nx(p.strike), ny(p.T), nz(p.implied_vol), surfaceCam));
+  const place = fitter(allRaw, W, H);
+  const project = (x, y, z) => place(projectRaw(x, y, z, surfaceCam));
+
+  // The floor, drawn first so the mesh sits on top of it.
+  const floor = [[-1, -1], [1, -1], [1, 1], [-1, 1]]
+    .map(([x, y]) => project(x, y, -0.55));
+  svg.appendChild(el("path", {
+    d: floor.map((p, i) => `${i ? "L" : "M"}${p.sx.toFixed(1)},${p.sy.toFixed(1)}`).join("") + "Z",
+    fill: "var(--paper-sunk)", stroke: "var(--rule)", "stroke-width": 1,
+  }));
+
+  // Build every quad with its depth, then paint far to near.
+  const quads = [];
+  for (let i = 0; i < strikes.length - 1; i++) {
+    for (let j = 0; j < times.length - 1; j++) {
+      const corners = [
+        [strikes[i], times[j]], [strikes[i + 1], times[j]],
+        [strikes[i + 1], times[j + 1]], [strikes[i], times[j + 1]],
+      ];
+      const vs = corners.map(([k, t]) => at.get(`${k}|${t}`));
+      if (vs.some((v) => v === undefined)) continue;
+
+      const pts = corners.map(([k, t], n) =>
+        project(nx(k), ny(t), nz(vs[n])));
+      const mean = vs.reduce((a, b) => a + b, 0) / 4;
+      quads.push({
+        pts,
+        depth: pts.reduce((a, p) => a + p.depth, 0) / 4,
+        fill: viridis((mean - vlo) / span),
+      });
+    }
+  }
+  quads.sort((a, b) => a.depth - b.depth);
+
+  for (const q of quads) {
+    svg.appendChild(el("path", {
+      d: q.pts.map((p, i) => `${i ? "L" : "M"}${p.sx.toFixed(1)},${p.sy.toFixed(1)}`).join("") + "Z",
+      fill: q.fill, stroke: "rgba(255,255,255,0.55)", "stroke-width": 0.8,
+      "stroke-linejoin": "round",
+    }));
+  }
+
+  // Axis labels at the corners of the floor, so the orientation is readable
+  // without a legend.
+  // The axis RANGES live under the figure, not in it. Anchoring them to the
+  // floor plane kept putting them under the mesh, which overhangs its own
+  // floor edges at most rotations, and chasing that with bigger offsets is a
+  // fight you lose at some angle. Text below the chart cannot collide at any.
+  $("surface-axes").textContent =
+    `strike ${fmt(strikes[0], 0)} to ${fmt(strikes[strikes.length - 1], 0)}` +
+    `  ·  expiry ${fmt(times[0], 2)}y to ${fmt(times[times.length - 1], 2)}y` +
+    `  ·  implied vol ${(vlo * 100).toFixed(1)}% to ${(vhi * 100).toFixed(1)}%`;
+
+  // Vertical scale, since colour alone should not be the only way to read a
+  // height. Two ticks is enough to set the range.
+  const hi = project(-1, -1, nz(vhi));
+  const lo = project(-1, -1, nz(vlo));
+  svg.appendChild(el("line", {
+    class: "axis", x1: lo.sx, y1: lo.sy, x2: hi.sx, y2: hi.sy,
+  }));
+  svg.appendChild(el("text", { class: "tick", x: hi.sx - 8, y: hi.sy, "text-anchor": "end" },
+    `${(vhi * 100).toFixed(1)}%`));
+  svg.appendChild(el("text", { class: "tick", x: lo.sx - 8, y: lo.sy, "text-anchor": "end" },
+    `${(vlo * 100).toFixed(1)}%`));
+
+  // Colour key, so the fill is quantitative rather than decorative.
+  const kx = W - 150, ky = 28;
+  for (let i = 0; i < 60; i++) {
+    svg.appendChild(el("rect", {
+      x: kx + i * 2, y: ky, width: 2.2, height: 10, fill: viridis(i / 59), stroke: "none",
+    }));
+  }
+  svg.appendChild(el("text", { class: "tick", x: kx, y: ky - 5 }, `${(vlo * 100).toFixed(1)}%`));
+  svg.appendChild(el("text", { class: "tick", x: kx + 120, y: ky - 5, "text-anchor": "end" },
+    `${(vhi * 100).toFixed(1)}%`));
+}
+
+/* Drag to rotate. A surface read from one fixed angle hides whatever is behind
+ * its own ridge, which is the main practical reason these are interactive. */
+function wireSurfaceDrag() {
+  const svg = $("surface-plot");
+  let dragging = false, lastX = 0, lastY = 0;
+
+  svg.addEventListener("pointerdown", (e) => {
+    if (state.surfaceView !== "surface") return;
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    svg.setPointerCapture(e.pointerId);
+    svg.style.cursor = "grabbing";
+  });
+  svg.addEventListener("pointermove", (e) => {
+    if (!dragging || !surfaceData) return;
+    surfaceCam.yaw += (e.clientX - lastX) * 0.01;
+    // Clamped so the surface cannot be tipped past edge-on, where it becomes
+    // a line and the picture stops meaning anything.
+    surfaceCam.pitch = Math.max(0.08, Math.min(1.35, surfaceCam.pitch + (e.clientY - lastY) * 0.006));
+    lastX = e.clientX; lastY = e.clientY;
+    renderSurface3D(surfaceData);
+  });
+  const stop = (e) => { dragging = false; svg.style.cursor = ""; };
+  svg.addEventListener("pointerup", stop);
+  svg.addEventListener("pointercancel", stop);
+}
+
 function renderSurface() {
   const d = surfaceData;
   if (!d) return;
   const good = d.points.filter((p) => p.implied_vol !== null);
   if (!good.length) { $("surface-plot").innerHTML = ""; return; }
+
+  if (state.surfaceView === "surface") {
+    renderSurface3D(d);
+    $("surface-legend").innerHTML =
+      '<span>drag the surface to rotate it</span>';
+    $("surface-caption").innerHTML =
+      "Implied vol over strike and expiry. The downward tilt across strike is the " +
+      "<strong>skew</strong>, and Black-Scholes cannot express it: it carries one sigma per " +
+      "underlying, not one per strike. Colour is the same quantity as height, so a flat sheet " +
+      "would be the model's own assumption and a tilted one is the market disagreeing with it.";
+    return;
+  }
 
   let series;
   let opts;
@@ -687,6 +901,7 @@ function init() {
   });
   wireSegment("seg-cells", "cells", buildSurface, false);
   wireSegment("seg-surface-view", "surfaceView", renderSurface, false);
+  wireSurfaceDrag();
   $("market-price").addEventListener("input", () => {
     clearTimeout(impliedPending);
     impliedPending = setTimeout(solveImplied, 300);

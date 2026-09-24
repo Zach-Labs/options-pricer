@@ -316,8 +316,13 @@ def api_sample_grid():
     p = parse_inputs(payload)
     kind = payload.get("kind", "call")
 
-    expiries = [0.08, 0.25, 0.5, 1.0]
-    strikes = [round(p.S * m / 5) * 5 for m in (0.88, 0.94, 1.0, 1.06, 1.12)]
+    # A denser grid than a person would type by hand, because the sample is
+    # what shows the SHAPE: a 5x4 mesh reads as facets, a 9x6 reads as a
+    # surface. A pasted grid can be as coarse as it likes.
+    expiries = [0.08, 0.17, 0.25, 0.5, 0.75, 1.0]
+    step = max(1.0, round(p.S * 0.04 / 5) * 5)   # a listed-looking increment
+    lo = round((p.S * 0.84) / step) * step
+    strikes = sorted({lo + step * i for i in range(9)})
 
     lines = ["\t" + "\t".join(f"{t:g}" for t in expiries)]
     for K in strikes:
