@@ -171,3 +171,19 @@ def test_reading_prices_as_vols_produces_a_visibly_different_surface() -> None:
 def test_an_unknown_cells_are_value_is_refused() -> None:
     with pytest.raises(SurfaceError, match="must be 'price' or 'vol'"):
         build_surface(TAB_GRID, S=100.0, r=0.05, q=0.0, kind="call", cells_are="iv")
+
+
+def test_a_given_vol_reports_unknown_precision_not_perfect_precision() -> None:
+    """We were handed this number, we did not compute it.
+
+    An uncertainty of 0.0 would claim the quote is pinned exactly, which we
+    have no basis for. None says we do not know, which is true. Inverted cells
+    do carry a real uncertainty, because there the precision is computable.
+    """
+    given = build_surface("x,0.25\n100,0.24", S=100.0, r=0.05, q=0.0,
+                          kind="call", cells_are="vol", as_of=TODAY)
+    assert given["points"][0]["uncertainty"] is None
+
+    text, _ = priced_grid()
+    inverted = build_surface(text, S=100.0, r=0.05, q=0.0, kind="call", as_of=TODAY)
+    assert all(p["uncertainty"] is not None for p in inverted["points"])

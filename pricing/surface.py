@@ -197,7 +197,10 @@ def build_surface(
                 # both conventions rather than making the reader normalise, and
                 # pick on magnitude: no equity option implies 150 in decimal.
                 iv = quote / 100.0 if quote > 1.5 else quote
-                unc = 0.0
+                # None, not 0.0. We did not compute this number, we were handed
+                # it, so we have no idea how precisely it is pinned. Reporting
+                # zero would claim perfect precision for someone else's figure.
+                unc = None
             else:
                 try:
                     iv, unc = implied_vol_with_uncertainty(
