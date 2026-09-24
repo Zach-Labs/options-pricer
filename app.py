@@ -324,7 +324,12 @@ def api_sample_grid():
     lo = round((p.S * 0.84) / step) * step
     strikes = sorted({lo + step * i for i in range(9)})
 
-    lines = ["\t" + "\t".join(f"{t:g}" for t in expiries)]
+    # Padded to fixed columns rather than tab-separated. Tabs are what a
+    # terminal pastes and the parser accepts them, but tab stops do not align
+    # numbers of differing width, so a generated sample rendered as a ragged
+    # wall of digits. Two decimals because options quote in cents; four implied
+    # a precision no quote has.
+    lines = ["      " + "".join(f"{t:>9g}" for t in expiries)]
     for K in strikes:
         cells = []
         for T in expiries:
@@ -333,8 +338,9 @@ def api_sample_grid():
             moneyness = math.log(K / p.S)
             sigma = 0.20 - 0.35 * moneyness / (1.0 + 2.0 * T) + 0.02 * T
             sigma = max(0.05, sigma)
-            cells.append(f"{bsm.price(bsm.Inputs(S=p.S, K=K, T=T, r=p.r, sigma=sigma, q=p.q), kind):.4f}")
-        lines.append(f"{K:g}\t" + "\t".join(cells))
+            px = bsm.price(bsm.Inputs(S=p.S, K=K, T=T, r=p.r, sigma=sigma, q=p.q), kind)
+            cells.append(f"{px:>9.2f}")
+        lines.append(f"{K:<6g}" + "".join(cells))
 
     return jsonify({"grid": "\n".join(lines)})
 

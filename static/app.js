@@ -434,7 +434,6 @@ async function buildSurface() {
   if (!text) {
     surfaceData = null;
     $("surface-plot").innerHTML = "";
-    $("surface-legend").innerHTML = "";
     status.textContent = "";
     status.className = "hint";
     return;
@@ -456,7 +455,6 @@ async function buildSurface() {
   } catch (e) {
     surfaceData = null;
     $("surface-plot").innerHTML = "";
-    $("surface-legend").innerHTML = "";
     status.className = "hint bad";
     status.textContent = e.message;
   }
@@ -473,7 +471,10 @@ async function buildSurface() {
  * over them. There is no z-buffer and none is needed for a surface that is a
  * height field, because a height field cannot fold back on itself. */
 
-const surfaceCam = { yaw: -0.62, pitch: 0.52 };
+// A flatter default pitch than feels natural to pick by eye. A steep one
+// throws the floor plane a long way down the canvas and leaves a big empty
+// wedge under the mesh, which reads as dead space rather than depth.
+const surfaceCam = { yaw: -0.58, pitch: 0.40 };
 
 /* Viridis, sampled at five anchors and interpolated between them. Chosen over
  * a prettier gradient because it is perceptually uniform: equal steps in
@@ -504,7 +505,7 @@ function projectRaw(x, y, z, cam) {
   const X = x * cy - y * sy;
   const Y = x * sy + y * cy;
 
-  return { rx: X, ry: (Y * sp - z * cp) * 0.9, depth: Y * cp + z * sp };
+  return { rx: X, ry: (Y * sp - z * cp) * 0.82, depth: Y * cp + z * sp };
 }
 
 /* Fit whatever was projected into the viewport with a margin.
@@ -552,25 +553,57 @@ function renderSurface3D(d) {
 
   const nx = (k) => (strikes.length === 1 ? 0 : (strikes.indexOf(k) / (strikes.length - 1)) * 2 - 1);
   const ny = (t) => (times.length === 1 ? 0 : (times.indexOf(t) / (times.length - 1)) * 2 - 1);
-  const nz = (v) => ((v - vlo) / span) * 1.1 - 0.55;
+  const nz = (v) => ((v - vlo) / span) * 0.85 - 0.42;
 
   // Pass one: project every point that will be drawn, so the fit accounts for
   // the mesh AND the floor rather than assuming a bound.
   const allRaw = [];
   for (const [x, y] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-    allRaw.push(projectRaw(x, y, -0.55, surfaceCam));
+    allRaw.push(projectRaw(x, y, -0.42, surfaceCam));
   }
   for (const p of good) allRaw.push(projectRaw(nx(p.strike), ny(p.T), nz(p.implied_vol), surfaceCam));
   const place = fitter(allRaw, W, H);
   const project = (x, y, z) => place(projectRaw(x, y, z, surfaceCam));
 
-  // The floor, drawn first so the mesh sits on top of it.
-  const floor = [[-1, -1], [1, -1], [1, 1], [-1, 1]]
-    .map(([x, y]) => project(x, y, -0.55));
+  // The floor is a reference GRID, not a slab. Filled, it was a large grey
+  // wedge sitting under the raised part of the mesh, which reads as dead space
+  // rather than as depth. Ruled lines give the same ground reference and the
+  // same sense of perspective at a fraction of the visual weight.
+  const FLOOR_Z = -0.42;
+  const rule = (a, b) => {
+    const p1 = project(a[0], a[1], FLOOR_Z), p2 = project(b[0], b[1], FLOOR_Z);
+    svg.appendChild(el("line", {
+      x1: p1.sx.toFixed(1), y1: p1.sy.toFixed(1),
+      x2: p2.sx.toFixed(1), y2: p2.sy.toFixed(1),
+      stroke: "var(--rule-soft)", "stroke-width": 1,
+    }));
+  };
+  for (let i = 0; i <= 6; i++) {
+    const t = -1 + (2 * i) / 6;
+    rule([t, -1], [t, 1]);
+    rule([-1, t], [1, t]);
+  }
+  const floor = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => project(x, y, FLOOR_Z));
   svg.appendChild(el("path", {
     d: floor.map((p, i) => `${i ? "L" : "M"}${p.sx.toFixed(1)},${p.sy.toFixed(1)}`).join("") + "Z",
-    fill: "var(--paper-sunk)", stroke: "var(--rule)", "stroke-width": 1,
+    fill: "none", stroke: "var(--rule)", "stroke-width": 1,
   }));
+
+  // Drop lines from the four mesh corners to the floor, so the sheet reads as
+  // sitting ABOVE a plane rather than floating unattached to anything.
+  for (const [k, t] of [[strikes[0], times[0]], [strikes[strikes.length - 1], times[0]],
+                        [strikes[0], times[times.length - 1]],
+                        [strikes[strikes.length - 1], times[times.length - 1]]]) {
+    const v = at.get(`${k}|${t}`);
+    if (v === undefined) continue;
+    const top = project(nx(k), ny(t), nz(v));
+    const foot = project(nx(k), ny(t), FLOOR_Z);
+    svg.appendChild(el("line", {
+      x1: foot.sx.toFixed(1), y1: foot.sy.toFixed(1),
+      x2: top.sx.toFixed(1), y2: top.sy.toFixed(1),
+      stroke: "var(--rule)", "stroke-width": 1, "stroke-dasharray": "2 3",
+    }));
+  }
 
   // Build every quad with its depth, then paint far to near.
   const quads = [];
@@ -672,8 +705,6 @@ function renderSurface() {
 
   if (state.surfaceView === "surface") {
     renderSurface3D(d);
-    $("surface-legend").innerHTML =
-      '<span>drag the surface to rotate it</span>';
     $("surface-caption").innerHTML =
       "Implied vol over strike and expiry. The downward tilt across strike is the " +
       "<strong>skew</strong>, and Black-Scholes cannot express it: it carries one sigma per " +
@@ -708,7 +739,8 @@ function renderSurface() {
   }
 
   plot($("surface-plot"), series, opts);
-  $("surface-legend").innerHTML = series
+  const leg = $("surface-legend");
+  if (leg) leg.innerHTML = series
     .map((s) => `<span><i style="background:${s.color}"></i>${s.label}</span>`)
     .join("");
 
