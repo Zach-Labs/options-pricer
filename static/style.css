@@ -546,10 +546,20 @@ svg.lattice .val.ex { fill: var(--flag); }
 /* The grid input sits ABOVE the plot, not beside it. A 3D surface squeezed
    into a side column renders at half size and stops being readable, and the
    textarea does not need the height anyway. */
-.surface-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
-.surface-entry { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 24px; align-items: start; }
+/* The plot leads and the data entry sits under it. The grid box is wide
+   enough for six aligned columns without a horizontal scrollbar, which is what
+   made the sample look like noise before. */
+.surface-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 250px);
+  gap: 28px;
+  align-items: start;
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--rule-soft);
+}
 @media (max-width: 760px) { .surface-entry { grid-template-columns: minmax(0, 1fr); } }
-#surface-input { min-height: 150px; }
+#surface-input { min-height: 172px; }
 
 #surface-input {
   width: 100%;
@@ -566,8 +576,8 @@ svg.lattice .val.ex { fill: var(--flag); }
   padding: 12px;
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12.5px;
+  line-height: 1.75;
   color: var(--ink);
   resize: vertical;
 }
