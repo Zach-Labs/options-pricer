@@ -18,6 +18,7 @@ const state = {
   curve: "gamma",
   cells: "price",
   surfaceView: "surface",
+  gridIsSample: false,
   latSteps: 5,
 };
 
@@ -428,12 +429,33 @@ async function solveImplied() {
 
 let surfaceData = null;
 
+/* Priced off the contract on screen, so it always inverts cleanly. A hard-coded
+ * grid falls below intrinsic the moment the spot changes. */
+async function loadSampleGrid(announce) {
+  try {
+    const d = await post("/api/sample-grid", payload());
+    $("surface-input").value = d.grid;
+    $("seg-cells").querySelectorAll("button").forEach((b) =>
+      b.setAttribute("aria-pressed", String(b.dataset.val === "price")));
+    state.cells = "price";
+    state.gridIsSample = true;
+    await buildSurface();
+  } catch (e) {
+    if (announce) {
+      $("surface-status").className = "hint bad";
+      $("surface-status").textContent = e.message;
+    } else {
+      surfaceEmptyState("Paste a grid of quotes, or load the sample.");
+    }
+  }
+}
+
 async function buildSurface() {
   const text = $("surface-input").value.trim();
   const status = $("surface-status");
   if (!text) {
     surfaceData = null;
-    $("surface-plot").innerHTML = "";
+    surfaceEmptyState("Paste a grid of quotes, or load the sample.");
     status.textContent = "";
     status.className = "hint";
     return;
@@ -450,7 +472,8 @@ async function buildSurface() {
     status.textContent =
       `${d.inverted} of ${d.inverted + d.failed} cells` +
       (d.cells_are === "vol" ? " read as vols" : " inverted") +
-      ` · ${d.expiries.length} expiries · ${d.strikes.length} strikes`;
+      ` · ${d.expiries.length} expiries · ${d.strikes.length} strikes` +
+      (state.gridIsSample ? "  ·  SAMPLE, generated from the model, not market data" : "");
     renderSurface();
   } catch (e) {
     surfaceData = null;
@@ -528,6 +551,19 @@ function fitter(pointsRaw, W, H, margin = 54) {
   });
 }
 
+/* Say WHY the plot is blank. An empty frame is indistinguishable from a broken
+ * one, and this panel starts empty by nature: there is nothing to draw until
+ * there are quotes to draw it from. */
+function surfaceEmptyState(message) {
+  const svg = $("surface-plot");
+  svg.innerHTML = "";
+  const W = 900, H = svg.viewBox.baseVal.height || 400;
+  svg.appendChild(el("text", {
+    class: "tick", x: W / 2, y: H / 2, "text-anchor": "middle",
+  }, message));
+  $("surface-axes").textContent = "";
+}
+
 function renderSurface3D(d) {
   const svg = $("surface-plot");
   svg.innerHTML = "";
@@ -535,9 +571,7 @@ function renderSurface3D(d) {
 
   const good = d.points.filter((p) => p.implied_vol !== null);
   if (good.length < 4) {
-    svg.appendChild(el("text", {
-      class: "tick", x: W / 2, y: H / 2, "text-anchor": "middle",
-    }, "need at least a 2x2 block of quotes to draw a surface"));
+    surfaceEmptyState("A surface needs at least a 2x2 block of quotes.");
     return;
   }
 
@@ -913,24 +947,11 @@ function init() {
 
   let surfacePending = null;
   $("surface-input").addEventListener("input", () => {
+    state.gridIsSample = false;
     clearTimeout(surfacePending);
     surfacePending = setTimeout(buildSurface, 400);
   });
-  $("btn-surface-demo").addEventListener("click", async () => {
-    // Priced off the contract on screen, so it always inverts cleanly. A
-    // hard-coded grid goes below intrinsic the moment the spot changes.
-    try {
-      const d = await post("/api/sample-grid", payload());
-      $("surface-input").value = d.grid;
-      $("seg-cells").querySelectorAll("button").forEach((b) =>
-        b.setAttribute("aria-pressed", String(b.dataset.val === "price")));
-      state.cells = "price";
-      await buildSurface();
-    } catch (e) {
-      $("surface-status").className = "hint bad";
-      $("surface-status").textContent = e.message;
-    }
-  });
+  $("btn-surface-demo").addEventListener("click", () => loadSampleGrid(true));
   wireSegment("seg-cells", "cells", buildSurface, false);
   wireSegment("seg-surface-view", "surfaceView", renderSurface, false);
   wireSurfaceDrag();
@@ -967,7 +988,7 @@ function init() {
     });
   });
 
-  refreshAll();
+  refreshAll().then(() => loadSampleGrid(false));
 }
 
 document.addEventListener("DOMContentLoaded", init);

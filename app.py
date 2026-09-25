@@ -320,8 +320,14 @@ def api_sample_grid():
     # what shows the SHAPE: a 5x4 mesh reads as facets, a 9x6 reads as a
     # surface. A pasted grid can be as coarse as it likes.
     expiries = [0.08, 0.17, 0.25, 0.5, 0.75, 1.0]
-    step = max(1.0, round(p.S * 0.04 / 5) * 5)   # a listed-looking increment
-    lo = round((p.S * 0.84) / step) * step
+    # Plus or minus 12% of spot, not 16 or 20. Quotes are rounded to two
+    # decimals like real ones, and beyond about 12% the near-dated cells are
+    # worth under half a cent and round to 0.00, which is a quote that cannot
+    # be inverted. Measured: at +/-16% the cheapest cell is 0.0007. This range
+    # keeps the cheapest at about 0.02, so every cell carries real information.
+    span = 0.12
+    step = max(0.5, round(p.S * (2 * span) / 8 / 0.5) * 0.5)
+    lo = round((p.S * (1 - span)) / step) * step
     strikes = sorted({lo + step * i for i in range(9)})
 
     # Padded to fixed columns rather than tab-separated. Tabs are what a
@@ -339,7 +345,12 @@ def api_sample_grid():
             sigma = 0.20 - 0.35 * moneyness / (1.0 + 2.0 * T) + 0.02 * T
             sigma = max(0.05, sigma)
             px = bsm.price(bsm.Inputs(S=p.S, K=K, T=T, r=p.r, sigma=sigma, q=p.q), kind)
-            cells.append(f"{px:>9.2f}")
+            # Blank, not "0.00". A contract worth under half a cent does not
+            # trade at zero, it simply is not quoted, and a printed 0.00 is a
+            # quote that cannot be inverted: there is no volatility that
+            # produces it. Real grids are ragged for exactly this reason, and
+            # the parser already treats a blank as a hole.
+            cells.append(f"{px:>9.2f}" if px >= 0.005 else " " * 9)
         lines.append(f"{K:<6g}" + "".join(cells))
 
     return jsonify({"grid": "\n".join(lines)})
